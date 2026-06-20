@@ -16,12 +16,17 @@ import {
   type ReactNode,
 } from "react";
 
+import { DEFAULT_SHIKI_THEME, isShikiThemeKey, type ShikiThemeKey } from "../diff/themes";
+
 export type ThemeMode = "dark" | "light" | "system";
 export type ResolvedMode = "dark" | "light";
 export type DiffColors = "safe" | "classic";
+export type DiffStyle = "split" | "unified";
 
 const MODE_KEY = "ugit.theme.mode";
 const DIFF_KEY = "ugit.theme.diffColors";
+const SHIKI_KEY = "ugit.theme.shiki";
+const DIFFSTYLE_KEY = "ugit.theme.diffStyle";
 
 type ThemeContextValue = {
   mode: ThemeMode;
@@ -30,6 +35,12 @@ type ThemeContextValue = {
   setMode: (mode: ThemeMode) => void;
   diffColors: DiffColors;
   setDiffColors: (value: DiffColors) => void;
+  /** The chosen Shiki theme family (drives the diff renderer). */
+  shikiTheme: ShikiThemeKey;
+  setShikiTheme: (value: ShikiThemeKey) => void;
+  /** Side-by-side ("split") vs. inline ("unified") diff layout. */
+  diffStyle: DiffStyle;
+  setDiffStyle: (value: DiffStyle) => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -50,6 +61,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   );
   const [diffColors, setDiffColorsState] = useState<DiffColors>(() =>
     readStored(DIFF_KEY, ["safe", "classic"] as const, "safe"),
+  );
+  const [shikiTheme, setShikiThemeState] = useState<ShikiThemeKey>(() => {
+    const stored = typeof localStorage !== "undefined" ? localStorage.getItem(SHIKI_KEY) : null;
+    return stored && isShikiThemeKey(stored) ? stored : DEFAULT_SHIKI_THEME;
+  });
+  const [diffStyle, setDiffStyleState] = useState<DiffStyle>(() =>
+    readStored(DIFFSTYLE_KEY, ["split", "unified"] as const, "split"),
   );
   const [systemDark, setSystemDark] = useState(systemPrefersDark);
 
@@ -83,9 +101,39 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(DIFF_KEY, next);
   }, []);
 
+  const setShikiTheme = useCallback((next: ShikiThemeKey) => {
+    setShikiThemeState(next);
+    localStorage.setItem(SHIKI_KEY, next);
+  }, []);
+
+  const setDiffStyle = useCallback((next: DiffStyle) => {
+    setDiffStyleState(next);
+    localStorage.setItem(DIFFSTYLE_KEY, next);
+  }, []);
+
   const value = useMemo<ThemeContextValue>(
-    () => ({ mode, resolved, setMode, diffColors, setDiffColors }),
-    [mode, resolved, setMode, diffColors, setDiffColors],
+    () => ({
+      mode,
+      resolved,
+      setMode,
+      diffColors,
+      setDiffColors,
+      shikiTheme,
+      setShikiTheme,
+      diffStyle,
+      setDiffStyle,
+    }),
+    [
+      mode,
+      resolved,
+      setMode,
+      diffColors,
+      setDiffColors,
+      shikiTheme,
+      setShikiTheme,
+      diffStyle,
+      setDiffStyle,
+    ],
   );
 
   return <ThemeContext value={value}>{children}</ThemeContext>;

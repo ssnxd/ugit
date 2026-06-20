@@ -10,7 +10,10 @@ pub mod diff;
 pub mod model;
 pub mod store;
 
-pub use model::{Comment, Diff, DiffKind};
+pub use model::{
+    Comment, Diff, DiffKind, DiffLine, DiffLineKind, DiffSummary, FileChange, FileDiffDetail,
+    FileStatus, Hunk,
+};
 
 /// Crate-wide error type. Surfaces map this to their own representation
 /// (the GUI maps to `String` for IPC; the CLI maps via `anyhow`).

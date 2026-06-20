@@ -5,7 +5,7 @@
 //! same database (see `ugit_core::store`).
 
 use ugit_core::model::{DiffKind, DiffSummary};
-use ugit_core::{diff, store, Comment, Diff};
+use ugit_core::{diff, store, Comment, Diff, Hunk};
 
 /// Map a core error to a String so it surfaces as a rejected promise on the frontend.
 fn to_err<E: std::fmt::Display>(e: E) -> String {
@@ -28,6 +28,24 @@ fn compute_diff(
 #[tauri::command]
 fn diff_summary(repo_path: String, left: String, right: String) -> Result<DiffSummary, String> {
     diff::diff_summary(&repo_path, &left, &right).map_err(to_err)
+}
+
+/// Line-level hunks for a single file (the lazy, per-file path the diff view uses).
+#[tauri::command]
+fn file_hunks(
+    repo_path: String,
+    left: String,
+    right: String,
+    path: String,
+    old_path: Option<String>,
+) -> Result<Vec<Hunk>, String> {
+    diff::file_hunks(&repo_path, &left, &right, &path, old_path.as_deref()).map_err(to_err)
+}
+
+/// A blob's text at a ref — the before/after sides fed to the diff renderer.
+#[tauri::command]
+fn file_content(repo_path: String, rev: String, path: String) -> Result<Option<String>, String> {
+    diff::file_content(&repo_path, &rev, &path).map_err(to_err)
 }
 
 /// All comments on a diff — the same data `ugit comment <diff-id>` exports.
@@ -84,6 +102,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             compute_diff,
             diff_summary,
+            file_hunks,
+            file_content,
             list_comments,
             add_comment
         ])

@@ -36,6 +36,9 @@ enum Command {
         /// What kind of comparison this is.
         #[arg(long, value_enum, default_value_t = KindArg::RefToRef)]
         kind: KindArg,
+        /// Output format: a `--stat`-style listing, a unified patch, or JSON.
+        #[arg(long, value_enum, default_value_t = DiffFormat::Stat)]
+        format: DiffFormat,
     },
 
     /// Export every comment on a diff as JSON or Markdown — the agent handoff.
@@ -91,6 +94,16 @@ enum Format {
     Md,
 }
 
+#[derive(Copy, Clone, ValueEnum)]
+enum DiffFormat {
+    /// diff-id on line 1, then a `git diff --stat`-style file listing.
+    Stat,
+    /// A git-style unified patch — the agent handoff format.
+    Patch,
+    /// The full structured diff (files + hunks + lines) as JSON.
+    Json,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let conn = store::open().context("opening the ugit store")?;
@@ -101,14 +114,33 @@ fn main() -> Result<()> {
             right,
             repo,
             kind,
+            format,
         } => {
+            // Always register the diff so its id is available for commenting,
+            // regardless of how we render it.
             let diff = diff::compute_diff(&conn, &repo, &left, &right, kind.into())
                 .context("computing diff")?;
-            let summary = diff::diff_summary(&repo, &left, &right).context("computing diff")?;
-            // First line is the stable diff-id so `id=$(ugit diff a b | head -1)`
-            // keeps working; the file summary follows on stderr-free stdout.
-            println!("{}", diff.id);
-            print!("{}", render_summary(&summary));
+            match format {
+                DiffFormat::Stat => {
+                    let summary =
+                        diff::diff_summary(&repo, &left, &right).context("computing diff")?;
+                    // First line is the stable diff-id so `id=$(ugit diff a b | head -1)`
+                    // keeps working; the file summary follows.
+                    println!("{}", diff.id);
+                    print!("{}", render_summary(&summary));
+                }
+                DiffFormat::Patch => {
+                    print!(
+                        "{}",
+                        diff::unified_diff(&repo, &left, &right).context("computing diff")?
+                    );
+                }
+                DiffFormat::Json => {
+                    let detail =
+                        diff::diff_detail(&repo, &left, &right).context("computing diff")?;
+                    println!("{}", serde_json::to_string_pretty(&detail)?);
+                }
+            }
         }
 
         Command::Comment { diff_id, format } => {

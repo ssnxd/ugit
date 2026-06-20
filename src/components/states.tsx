@@ -1,9 +1,15 @@
 /** Shared loading / empty / error primitives used across the app. */
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 /** A skeleton block — used in place of spinners over content. */
-export function Skeleton({ className = "" }: { className?: string }) {
-  return <div className={`animate-pulse rounded-sm bg-line/60 ${className}`} aria-hidden="true" />;
+export function Skeleton({ className = "", style }: { className?: string; style?: CSSProperties }) {
+  return (
+    <div
+      className={`animate-pulse rounded-sm bg-line/60 ${className}`}
+      style={style}
+      aria-hidden="true"
+    />
+  );
 }
 
 /** An empty state that teaches the interface rather than saying "nothing here". */

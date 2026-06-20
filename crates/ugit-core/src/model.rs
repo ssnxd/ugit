@@ -106,6 +106,55 @@ pub struct DiffSummary {
     pub total_deletions: u32,
 }
 
+/// The kind of a single line in a hunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DiffLineKind {
+    /// Unchanged line shown for context around changes.
+    Context,
+    /// Line added on the right side.
+    Addition,
+    /// Line removed from the left side.
+    Deletion,
+}
+
+/// A single line within a [`Hunk`], carrying its 1-based line numbers on each
+/// side (the anchor a comment hangs off of).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffLine {
+    pub kind: DiffLineKind,
+    /// 1-based line number in the left/old file (None for additions).
+    pub old_line: Option<u32>,
+    /// 1-based line number in the right/new file (None for deletions).
+    pub new_line: Option<u32>,
+    /// Line text, without the trailing newline.
+    pub content: String,
+}
+
+/// A contiguous run of changes with surrounding context — one `@@ … @@` block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hunk {
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+    pub lines: Vec<DiffLine>,
+}
+
+/// A file's full line-level diff — the per-file detail computed on demand.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDiffDetail {
+    pub path: String,
+    pub old_path: Option<String>,
+    pub status: FileStatus,
+    /// True when either side is binary; `hunks` is then empty.
+    pub binary: bool,
+    pub hunks: Vec<Hunk>,
+}
+
 /// A comment attached to a diff, optionally anchored to a file/line/side.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

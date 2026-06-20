@@ -6,12 +6,18 @@ import "@fontsource-variable/jetbrains-mono";
 import "./styles.css";
 
 import App from "./App";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { DiffWorkerProvider } from "./diff/DiffWorkerProvider";
 import { ThemeProvider } from "./theme/theme";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ThemeProvider>
-      <App />
+      <DiffWorkerProvider>
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
+      </DiffWorkerProvider>
     </ThemeProvider>
   </React.StrictMode>,
 );

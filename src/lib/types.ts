@@ -26,6 +26,31 @@ export type DiffSummary = {
   totalDeletions: number;
 };
 
+export type DiffLineKind = "context" | "addition" | "deletion";
+
+export type DiffLine = {
+  kind: DiffLineKind;
+  oldLine: number | null;
+  newLine: number | null;
+  content: string;
+};
+
+export type Hunk = {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: DiffLine[];
+};
+
+export type FileDiffDetail = {
+  path: string;
+  oldPath: string | null;
+  status: FileStatus;
+  binary: boolean;
+  hunks: Hunk[];
+};
+
 export type Diff = {
   id: string;
   repoPath: string;

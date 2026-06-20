@@ -64,6 +64,30 @@
   --ug-diff-del-bg: oklch(0.32 0.055 55);
   --ug-diff-del-line: oklch(0.76 0.12 55);
 
+  /*
+   * Route @pierre/diffs' add/remove colors through ugit's tokens so diff colors
+   * stay colorblind-safe (or classic) and consistent across every Shiki theme.
+   * Custom properties inherit into the renderer's shadow DOM. Syntax
+   * highlighting still comes from the chosen Shiki theme.
+   */
+  --diffs-bg-addition-override: var(--ug-diff-add-bg);
+  --diffs-bg-deletion-override: var(--ug-diff-del-bg);
+  --diffs-addition-color-override: var(--ug-diff-add-line);
+  --diffs-deletion-color-override: var(--ug-diff-del-line);
+  --diffs-font-family: var(--font-mono);
+
+  /* @pierre/trees follows the same chrome tokens (it auto-injects base styles;
+     these custom props inherit into its shadow DOM). */
+  --trees-bg: var(--ug-surface);
+  --trees-fg: var(--ug-ink);
+  --trees-fg-muted: var(--ug-muted);
+  --trees-accent: var(--ug-accent);
+  --trees-border-color: var(--ug-border);
+  --trees-added-dark: var(--ug-diff-add-line);
+  --trees-added-light: var(--ug-diff-add-line);
+  --trees-deleted-dark: var(--ug-diff-del-line);
+  --trees-deleted-light: var(--ug-diff-del-line);
+
   /* Semantic elevation + z-scale */
   --ug-shadow-overlay: 0 8px 30px -8px oklch(0 0 0 / 0.5), 0 2px 8px -4px oklch(0 0 0 / 0.4);
   --z-dropdown: 100;
@@ -173,4 +197,11 @@
   .ease-out-quint {
     transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   }
+}
+
+/* The diff renderer fills the main pane and scrolls within it. */
+.ugit-diff {
+  display: block;
+  width: 100%;
+  font-size: var(--text-sm);
 }

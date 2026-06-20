@@ -49,24 +49,23 @@ collaboration/sync between machines.
 
 ## Epic 0 — Foundations & app shell
 
-- [ ] Strip Tauri/React boilerplate (`App.tsx`, logos, `greet`); remove the dead `greet` IPC reference.
-- [ ] Wire Tailwind v4 into Vite + base stylesheet; establish design tokens (color, spacing, type scale).
-- [ ] Dark/light theme with a single source of truth.
-- [ ] App layout shell: sidebar + main pane + status bar.
-- [ ] Frontend IPC client module (typed wrappers around `invoke`) + shared TS types mirroring core.
-- [ ] Loading / empty / error state primitives used everywhere.
+- [x] Strip Tauri/React boilerplate (`App.tsx`, logos, `greet`); remove the dead `greet` IPC reference.
+- [x] Wire Tailwind v4 into Vite + base stylesheet; establish design tokens (`--ug-*`, type/space/radius/z scales).
+- [x] Dark/light theme with a single source of truth (`theme.tsx`, persisted; Shiki-theme picker deferred to Epic 4).
+- [x] App layout shell: top bar + sidebar + main pane + status bar.
+- [x] Frontend IPC client module (typed wrappers around `invoke`) + shared TS types mirroring core.
+- [x] Loading / empty / error state primitives used everywhere.
 
 ## Epic 1 — Diff engine (`ugit-core`, the heart)
 
-- [ ] Ref resolution with `gix`: branch, tag, commit SHA, `HEAD`, short SHAs → tree/commit object.
-- [ ] Working-tree / worktree state resolution (for worktree-to-worktree and dirty-tree diffs).
-- [ ] Tree-to-tree change list: per file → status (added/modified/deleted/renamed/copied), mode changes.
-- [ ] Per-file hunk computation: lines with old/new line numbers + change type; structured `DiffResult`.
-- [ ] Edge cases: binary files, large-file truncation/skip, empty diff, rename/copy detection, EOL/whitespace.
-- [ ] **Performance:** fast file-list first, hunks computed lazily/per-file; content-addressed cache
-  keyed on `(left_tree_oid, right_tree_oid)` so re-open is instant.
-- [ ] Stable serialized schema (`DiffResult`) shared by GUI + CLI.
-- [ ] Unit tests over a fixture repo (added/modified/deleted/renamed/binary/large cases).
+- [x] Ref resolution with `gix`: branch, tag, commit SHA, `HEAD`, short SHAs → tree (`resolve_tree`).
+- [ ] Working-tree / worktree state resolution (for worktree-to-worktree and dirty-tree diffs). *(deferred — tree-to-tree covers branch/commit/tag/SHA; dirty worktree diff comes with Epic 2)*
+- [x] Tree-to-tree change list: per file → status (added/modified/deleted/renamed/copied) + line counts (`diff_summary`).
+- [x] Per-file hunk computation: lines with old/new line numbers + change type, via one `gix` `UnifiedDiff` pass (`file_hunks` / `diff_detail`). `unified_diff` renders the git patch; `file_content` reads a side.
+- [x] Edge cases: binary detection (NUL heuristic), empty diff, rename/copy detection. *(large-file truncation deferred to perf pass; EOL stripped to `\n`)*
+- [x] **Performance:** fast file-list first (`diff_summary`), hunks computed lazily per-file (`file_hunks`). *(content-addressed cache deferred to Epic 6 perf pass)*
+- [x] Stable serialized schema shared by GUI + CLI (camelCase serde on `DiffSummary`/`FileChange`/`Hunk`/`DiffLine`/`FileDiffDetail`).
+- [x] Unit tests over a fixture repo (added/modified/deleted, line numbers, patch render, file content, bad ref). *(renamed/large cases deferred)*
 
 ## Epic 2 — Repo introspection (`ugit-core`) — *only to pick refs*
 
@@ -79,8 +78,7 @@ collaboration/sync between machines.
 
 ## Epic 3 — CLI surface (`ugit-cli`)
 
-- [ ] `ugit diff <left> <right>` actually emits the diff; persists/returns stable id (per D1).
-  Add `--format json|patch|md`.
+- [x] `ugit diff <left> <right>` emits the diff; persists/returns stable id (per D1). `--format stat|patch|json`.
 - [ ] `ugit comment <diff-id>` export (exists) — lock the JSON schema for agent consumption.
 - [ ] `ugit comment-add` (exists) — ergonomic flags, validate anchor.
 - [ ] `ugit diffs` — list recent diffs (id, refs, repo, comment count).
@@ -89,12 +87,15 @@ collaboration/sync between machines.
 
 ## Epic 4 — GUI: diff viewing
 
-- [ ] Repo picker (open folder) + recent repos.
-- [ ] Ref picker: choose left & right from branches / commits / worktrees / tags.
-- [ ] File tree via **trees.software**; diff pane via **diffs.com**.
-- [ ] Unified/split toggle, syntax highlighting, binary/large-file fallbacks.
-- [ ] Virtualized rendering for big diffs (hit the perf budget).
-- [ ] Keyboard navigation: next/prev file, next/prev hunk, jump-to-file.
+- [ ] Repo picker (open folder) + recent repos. *(text input stopgap; folder picker + recents pair with Epic 2)*
+- [ ] Ref picker: choose left & right from branches / commits / worktrees / tags. *(text inputs for now; real picker needs Epic 2)*
+- [x] Diff pane via **diffs.com** — `MultiFileDiff` fed `file_content`, split view, Shiki highlighting, binary fallback, loading skeleton. *(Cut 1)*
+- [x] **Shiki theme system (one-theme-everywhere):** theme picker (`SHIKI_THEMES`) drives the diff + app; `pierre-dark`/`pierre-light` default; diff colors routed through colorblind-safe `--ug-*` tokens via `--diffs-*-override`. Worker pool wired for Vite. *(Cut 1)*
+- [x] File tree via **trees.software** (`FileTreeSidebar`) — nested folders, file-type icons, git-status colors, +/− row decorations, two-way selection sync, themed via `--trees-*`→`--ug-*`. *(Cut 2)*
+- [x] Unified/split toggle (persisted `diffStyle`); binary fallback. *(Cut 2)*
+- [ ] Virtualized rendering for big diffs (hit the perf budget). *(diffs.com virtualizes; revisit in Epic 6)*
+- [x] Keyboard navigation: next/prev file (`j`/`k`). *(next/prev hunk + jump-to-file deferred)*
+- [ ] Chrome tokens repainted from the active Shiki theme's `colors` map (currently chrome follows our tuned light/dark sets). *(Cut 2 stretch)*
 
 ## Epic 5 — GUI: commenting
 

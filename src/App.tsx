@@ -1,12 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { FileList } from "./components/FileList";
+import { FileTreeSidebar } from "./components/FileTreeSidebar";
 import { EmptyState, ErrorState, Skeleton } from "./components/states";
 import { ThemeControls } from "./components/ThemeControls";
+import { DiffView } from "./diff/DiffView";
 import { diffSummary } from "./lib/ipc";
+import { useTheme } from "./theme/theme";
 import type { DiffSummary } from "./lib/types";
 
 type Status = "idle" | "loading" | "ready" | "error";
+/** The refs that produced the current summary — frozen so editing the inputs
+ *  afterwards doesn't desync the rendered diff. */
+type ActiveDiff = { repoPath: string; left: string; right: string };
 
 function App() {
   const [repoPath, setRepoPath] = useState("");
@@ -15,17 +20,47 @@ function App() {
 
   const [status, setStatus] = useState<Status>("idle");
   const [summary, setSummary] = useState<DiffSummary | null>(null);
+  const [active, setActive] = useState<ActiveDiff | null>(null);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
 
+  const { diffStyle, setDiffStyle } = useTheme();
+
+  // Keyboard nav: j/k move between changed files (ignored while typing).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      const files = summary?.files ?? [];
+      if (files.length === 0 || (e.key !== "j" && e.key !== "k")) return;
+      e.preventDefault();
+      const i = files.findIndex((f) => f.path === selected);
+      const base = i === -1 ? 0 : i;
+      const next = e.key === "j" ? Math.min(files.length - 1, base + 1) : Math.max(0, base - 1);
+      setSelected(files[next]?.path ?? null);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [summary, selected]);
+
   async function runDiff() {
-    if (!repoPath.trim()) return;
+    const params = { repoPath: repoPath.trim(), left: left.trim(), right: right.trim() };
+    if (!params.repoPath) return;
     setStatus("loading");
     setError("");
     setSelected(null);
     try {
-      const result = await diffSummary(repoPath.trim(), left.trim(), right.trim());
+      const result = await diffSummary(params.repoPath, params.left, params.right);
       setSummary(result);
+      setActive(params);
       setStatus("ready");
       setSelected(result.files[0]?.path ?? null);
     } catch (e) {
@@ -73,8 +108,13 @@ function App() {
               ))}
             </div>
           )}
-          {status === "ready" && summary && summary.files.length > 0 && (
-            <FileList files={summary.files} selected={selected} onSelect={setSelected} />
+          {status === "ready" && summary && summary.files.length > 0 && active && (
+            <FileTreeSidebar
+              key={`${active.repoPath}:${active.left}:${active.right}`}
+              files={summary.files}
+              selected={selected}
+              onSelect={setSelected}
+            />
           )}
           {status === "ready" && summary && summary.files.length === 0 && (
             <EmptyState title="No changes" hint="These two refs point at identical trees." />
@@ -88,10 +128,10 @@ function App() {
           {status === "error" && <ErrorState message={error} onRetry={runDiff} />}
         </aside>
 
-        <main className="min-w-0 flex-1 overflow-auto">
-          {selectedFile ? (
-            <div className="flex h-full flex-col">
-              <div className="flex items-center gap-3 border-b border-line px-4 py-2">
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {selectedFile && active ? (
+            <>
+              <div className="flex shrink-0 items-center gap-3 border-b border-line bg-bg px-4 py-2">
                 <span className="truncate font-mono text-sm text-ink">{selectedFile.path}</span>
                 {!selectedFile.binary && (
                   <span className="shrink-0 font-mono text-xs tabular-nums text-muted">
@@ -103,14 +143,25 @@ function App() {
                     </span>
                   </span>
                 )}
+                <button
+                  type="button"
+                  onClick={() => setDiffStyle(diffStyle === "split" ? "unified" : "split")}
+                  className="ease-out-quint ml-auto shrink-0 rounded-md border border-line bg-surface px-2 py-1 text-xs text-muted transition-colors hover:bg-raised hover:text-ink"
+                  title="Toggle split / unified diff layout"
+                >
+                  {diffStyle === "split" ? "Split" : "Unified"}
+                </button>
               </div>
-              <div className="flex-1">
-                <EmptyState
-                  title="Diff view coming next"
-                  hint="The file-level summary is live. Line-level hunks (Epic 1, cut 2) and the diffs.com renderer (Epic 4) fill this pane."
+              <div className="min-h-0 flex-1 overflow-auto">
+                <DiffView
+                  repoPath={active.repoPath}
+                  left={active.left}
+                  right={active.right}
+                  file={selectedFile}
+                  diffStyle={diffStyle}
                 />
               </div>
-            </div>
+            </>
           ) : (
             <EmptyState
               title="ugit"
@@ -138,7 +189,7 @@ function App() {
         ) : (
           <span className="text-faint">ready</span>
         )}
-        <span className="ml-auto text-faint">⌘K — coming soon</span>
+        <span className="ml-auto text-faint">j/k — files · ⌘K — coming soon</span>
       </footer>
     </div>
   );
