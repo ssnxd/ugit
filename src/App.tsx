@@ -1,14 +1,22 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
+import { CommentsPanel } from "./components/CommentsPanel";
 import { FileTreeSidebar } from "./components/FileTreeSidebar";
 import { RefPicker } from "./components/RefPicker";
 import { RepoOpener } from "./components/RepoOpener";
 import { EmptyState, ErrorState, Skeleton } from "./components/states";
 import { ThemeControls } from "./components/ThemeControls";
 import { DiffView } from "./diff/DiffView";
-import { diffSummary } from "./lib/ipc";
+import {
+  addComment,
+  computeDiff,
+  deleteComment,
+  diffSummary,
+  listComments,
+  updateComment,
+} from "./lib/ipc";
 import { useTheme } from "./theme/theme";
-import type { DiffSummary, RepoInfo } from "./lib/types";
+import type { Comment, DiffSummary, RepoInfo } from "./lib/types";
 
 type Status = "idle" | "loading" | "ready" | "error";
 /** The refs that produced the current summary — frozen so changing the pickers
@@ -26,7 +34,19 @@ function App() {
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
 
+  const [diffId, setDiffId] = useState<string | null>(null);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+
   const { diffStyle, setDiffStyle } = useTheme();
+
+  const loadComments = useCallback(async (id: string) => {
+    try {
+      setComments(await listComments(id));
+    } catch {
+      setComments([]);
+    }
+  }, []);
 
   // Keyboard nav: j/k move between changed files (ignored while typing).
   useEffect(() => {
@@ -59,16 +79,47 @@ function App() {
     setStatus("loading");
     setError("");
     setSelected(null);
+    setComments([]);
+    setDiffId(null);
     try {
-      const result = await diffSummary(params.repoPath, params.left, params.right);
+      const [result, diff] = await Promise.all([
+        diffSummary(params.repoPath, params.left, params.right),
+        computeDiff(params.repoPath, params.left, params.right),
+      ]);
       setSummary(result);
       setActive(params);
       setStatus("ready");
       setSelected(result.files[0]?.path ?? null);
+      setDiffId(diff.id);
+      loadComments(diff.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus("error");
     }
+  }
+
+  async function addCommentTo(body: string, filePath: string | null) {
+    if (!diffId) return;
+    await addComment({ diffId, body, filePath });
+    loadComments(diffId);
+  }
+  async function addInline(args: {
+    filePath: string;
+    line: number;
+    side: "left" | "right";
+    body: string;
+  }) {
+    if (!diffId) return;
+    await addComment({ diffId, ...args });
+    loadComments(diffId);
+  }
+  async function editComment(id: string, body: string) {
+    await updateComment(id, body);
+    if (diffId) loadComments(diffId);
+  }
+  async function removeComment(id: string) {
+    await deleteComment(id);
+    if (diffId) loadComments(diffId);
   }
 
   function closeRepo() {
@@ -78,6 +129,9 @@ function App() {
     setActive(null);
     setSelected(null);
     setError("");
+    setDiffId(null);
+    setComments([]);
+    setCommentsOpen(false);
   }
 
   const selectedFile = summary?.files.find((f) => f.path === selected) ?? null;
@@ -124,6 +178,20 @@ function App() {
             Diff
           </button>
         </div>
+        {diffId && (
+          <button
+            type="button"
+            onClick={() => setCommentsOpen((v) => !v)}
+            title="Toggle comments"
+            className={`ease-out-quint rounded-md border px-2 py-1 text-xs transition-colors ${
+              commentsOpen
+                ? "border-accent/40 bg-accent/15 text-ink"
+                : "border-line bg-surface text-muted hover:bg-raised hover:text-ink"
+            }`}
+          >
+            Comments{comments.length > 0 ? ` ${comments.length}` : ""}
+          </button>
+        )}
         <ThemeControls />
       </header>
 
@@ -188,6 +256,10 @@ function App() {
                   right={active.right}
                   file={selectedFile}
                   diffStyle={diffStyle}
+                  comments={comments}
+                  onAdd={addInline}
+                  onEdit={editComment}
+                  onDelete={removeComment}
                 />
               </div>
             </>
@@ -198,6 +270,17 @@ function App() {
             />
           )}
         </main>
+
+        {commentsOpen && diffId && (
+          <CommentsPanel
+            comments={comments}
+            selectedFile={selected}
+            onAdd={addCommentTo}
+            onEdit={editComment}
+            onDelete={removeComment}
+            onClose={() => setCommentsOpen(false)}
+          />
+        )}
       </div>
 
       {/* Status bar */}

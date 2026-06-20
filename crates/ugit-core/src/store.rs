@@ -16,7 +16,7 @@ use directories::BaseDirs;
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
-use crate::model::{Comment, Diff, DiffKind, RecentRepo};
+use crate::model::{Comment, Diff, DiffKind, DiffListItem, RecentRepo};
 use crate::{Error, Result};
 
 /// Application identifier. MUST stay in sync with `identifier` in
@@ -158,6 +158,32 @@ pub fn get_or_create_diff(
     }
 }
 
+/// Recent diffs (newest first) with their comment counts, optionally filtered to
+/// one repository. Powers `ugit diffs`.
+pub fn list_diffs(
+    conn: &Connection,
+    repo: Option<&str>,
+    limit: usize,
+) -> Result<Vec<DiffListItem>> {
+    let sql = "SELECT d.id, d.repo_path, d.left_ref, d.right_ref, d.kind, d.created_at,
+                      (SELECT COUNT(*) FROM comments c WHERE c.diff_id = d.id) AS comment_count
+               FROM diffs d
+               WHERE (?1 IS NULL OR d.repo_path = ?1)
+               ORDER BY d.created_at DESC LIMIT ?2";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params![repo, limit as i64], |row| {
+        Ok(DiffListItem {
+            diff: row_to_diff(row)?,
+            comment_count: row.get(6)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 /// Look up a diff by id.
 pub fn get_diff(conn: &Connection, id: &str) -> Result<Diff> {
     conn.query_row(
@@ -206,6 +232,33 @@ pub fn add_comment(
         ],
     )?;
     Ok(comment)
+}
+
+/// Edit a comment's body, returning the updated row.
+pub fn update_comment(conn: &Connection, id: &str, body: &str) -> Result<Comment> {
+    let changed = conn.execute(
+        "UPDATE comments SET body = ?2 WHERE id = ?1",
+        params![id, body],
+    )?;
+    if changed == 0 {
+        return Err(Error::CommentNotFound(id.to_string()));
+    }
+    conn.query_row(
+        "SELECT id, diff_id, file_path, line, side, body, created_at
+         FROM comments WHERE id = ?1",
+        params![id],
+        row_to_comment,
+    )
+    .map_err(Error::Sqlite)
+}
+
+/// Delete a comment by id.
+pub fn delete_comment(conn: &Connection, id: &str) -> Result<()> {
+    let changed = conn.execute("DELETE FROM comments WHERE id = ?1", params![id])?;
+    if changed == 0 {
+        return Err(Error::CommentNotFound(id.to_string()));
+    }
+    Ok(())
 }
 
 /// All comments on a diff, oldest first.
@@ -329,6 +382,27 @@ mod tests {
     }
 
     #[test]
+    fn list_diffs_with_counts_and_repo_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_at(dir.path().join("ugit.db")).unwrap();
+
+        let a = insert_diff(&conn, "/repo-a", "x", "y", DiffKind::RefToRef).unwrap();
+        let _b = insert_diff(&conn, "/repo-b", "m", "n", DiffKind::BranchToBranch).unwrap();
+        add_comment(&conn, &a.id, None, None, None, "one").unwrap();
+        add_comment(&conn, &a.id, None, None, None, "two").unwrap();
+
+        let all = list_diffs(&conn, None, 10).unwrap();
+        assert_eq!(all.len(), 2);
+        let a_row = all.iter().find(|d| d.diff.id == a.id).unwrap();
+        assert_eq!(a_row.comment_count, 2);
+
+        let only_b = list_diffs(&conn, Some("/repo-b"), 10).unwrap();
+        assert_eq!(only_b.len(), 1);
+        assert_eq!(only_b[0].diff.repo_path, "/repo-b");
+        assert_eq!(only_b[0].comment_count, 0);
+    }
+
+    #[test]
     fn recent_repos_upsert_and_order() {
         let dir = tempfile::tempdir().unwrap();
         let conn = open_at(dir.path().join("ugit.db")).unwrap();
@@ -341,6 +415,29 @@ mod tests {
         assert_eq!(recents.len(), 2, "upsert, not duplicate");
         assert_eq!(recents[0].path, "/a");
         assert_eq!(recents[0].name, "a-renamed");
+    }
+
+    #[test]
+    fn edit_and_delete_comment() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_at(dir.path().join("ugit.db")).unwrap();
+        let diff = insert_diff(&conn, "/repo", "a", "b", DiffKind::RefToRef).unwrap();
+        let c = add_comment(&conn, &diff.id, None, None, None, "first").unwrap();
+
+        let updated = update_comment(&conn, &c.id, "edited").unwrap();
+        assert_eq!(updated.body, "edited");
+        assert_eq!(
+            comments_for_diff(&conn, &diff.id).unwrap()[0].body,
+            "edited"
+        );
+
+        delete_comment(&conn, &c.id).unwrap();
+        assert!(comments_for_diff(&conn, &diff.id).unwrap().is_empty());
+
+        assert!(matches!(
+            delete_comment(&conn, &c.id).unwrap_err(),
+            Error::CommentNotFound(_)
+        ));
     }
 
     #[test]

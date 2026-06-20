@@ -124,6 +124,20 @@ fn add_comment(
     .map_err(to_err)
 }
 
+/// Edit a comment's body.
+#[tauri::command]
+fn update_comment(id: String, body: String) -> Result<Comment, String> {
+    let conn = store::open().map_err(to_err)?;
+    store::update_comment(&conn, &id, &body).map_err(to_err)
+}
+
+/// Delete a comment.
+#[tauri::command]
+fn delete_comment(id: String) -> Result<(), String> {
+    let conn = store::open().map_err(to_err)?;
+    store::delete_comment(&conn, &id).map_err(to_err)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
@@ -161,7 +175,9 @@ pub fn run() {
             worktrees,
             commits,
             list_comments,
-            add_comment
+            add_comment,
+            update_comment,
+            delete_comment
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

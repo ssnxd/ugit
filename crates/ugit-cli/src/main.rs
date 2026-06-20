@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use ugit_core::model::{DiffKind, DiffSummary, FileStatus};
-use ugit_core::{diff, store, Comment};
+use ugit_core::{diff, store, Comment, DiffListItem};
 
 #[derive(Parser)]
 #[command(
@@ -48,6 +48,19 @@ enum Command {
         /// Output format.
         #[arg(long, value_enum, default_value_t = Format::Json)]
         format: Format,
+    },
+
+    /// List recent diffs (id, refs, repo, comment count) — discover diff-ids.
+    Diffs {
+        /// Only show diffs for this repository path.
+        #[arg(long)]
+        repo: Option<String>,
+        /// Maximum number of diffs to list.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = DiffsFormat::Table)]
+        format: DiffsFormat,
     },
 
     /// Attach a comment to a diff.
@@ -104,6 +117,14 @@ enum DiffFormat {
     Json,
 }
 
+#[derive(Copy, Clone, ValueEnum)]
+enum DiffsFormat {
+    /// A human-readable table.
+    Table,
+    /// JSON array of diffs with comment counts.
+    Json,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let conn = store::open().context("opening the ugit store")?;
@@ -143,6 +164,19 @@ fn main() -> Result<()> {
             }
         }
 
+        Command::Diffs {
+            repo,
+            limit,
+            format,
+        } => {
+            let items =
+                store::list_diffs(&conn, repo.as_deref(), limit).context("listing diffs")?;
+            match format {
+                DiffsFormat::Json => println!("{}", serde_json::to_string_pretty(&items)?),
+                DiffsFormat::Table => print!("{}", render_diffs_table(&items)),
+            }
+        }
+
         Command::Comment { diff_id, format } => {
             // Surface a clear error if the diff doesn't exist.
             store::get_diff(&conn, &diff_id).context("looking up diff")?;
@@ -160,6 +194,19 @@ fn main() -> Result<()> {
             line,
             side,
         } => {
+            if let Some(s) = &side {
+                anyhow::ensure!(
+                    s == "left" || s == "right",
+                    "--side must be \"left\" or \"right\" (got {s:?})"
+                );
+            }
+            if let Some(l) = line {
+                anyhow::ensure!(l > 0, "--line must be a positive line number (got {l})");
+                anyhow::ensure!(
+                    file.is_some(),
+                    "--line requires --file (a line is anchored to a file)"
+                );
+            }
             let comment = store::add_comment(
                 &conn,
                 &diff_id,
@@ -174,6 +221,31 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// A compact table of recent diffs for `ugit diffs`.
+fn render_diffs_table(items: &[DiffListItem]) -> String {
+    if items.is_empty() {
+        return "no diffs yet\n".to_string();
+    }
+    let mut out = String::new();
+    for it in items {
+        let d = &it.diff;
+        let id8 = &d.id[..8.min(d.id.len())];
+        let repo = d
+            .repo_path
+            .rsplit('/')
+            .find(|s| !s.is_empty())
+            .unwrap_or(&d.repo_path);
+        out.push_str(&format!(
+            "{id8}  {} → {}  {repo}  {} comment{}\n",
+            d.left_ref,
+            d.right_ref,
+            it.comment_count,
+            if it.comment_count == 1 { "" } else { "s" },
+        ));
+    }
+    out
 }
 
 /// A `git diff --stat`-style listing of a diff's changed files.
@@ -229,4 +301,88 @@ fn render_markdown(diff_id: &str, comments: &[Comment]) -> String {
         out.push_str("\n\n");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ugit_core::{Diff, DiffListItem};
+
+    fn item(id: &str, repo: &str, left: &str, right: &str, count: i64) -> DiffListItem {
+        DiffListItem {
+            diff: Diff {
+                id: id.to_string(),
+                repo_path: repo.to_string(),
+                left_ref: left.to_string(),
+                right_ref: right.to_string(),
+                kind: DiffKind::RefToRef,
+                created_at: 0,
+            },
+            comment_count: count,
+        }
+    }
+
+    #[test]
+    fn diffs_table_renders_rows() {
+        let out = render_diffs_table(&[
+            item("0123456789abcdef", "/home/u/proj", "main", "feature", 2),
+            item("fedcba9876543210", "/home/u/proj", "HEAD^", "HEAD", 1),
+        ]);
+        assert!(out.contains("01234567")); // short id (8 chars)
+        assert!(out.contains("main → feature"));
+        assert!(out.contains("proj"));
+        assert!(out.contains("2 comments"));
+        assert!(out.contains("1 comment\n")); // singular
+    }
+
+    #[test]
+    fn diffs_table_empty() {
+        assert_eq!(render_diffs_table(&[]), "no diffs yet\n");
+    }
+
+    #[test]
+    fn comment_markdown_schema() {
+        let comments = vec![
+            Comment {
+                id: "c1".into(),
+                diff_id: "d".into(),
+                file_path: Some("src/lib.rs".into()),
+                line: Some(10),
+                side: Some("right".into()),
+                body: "anchored".into(),
+                created_at: 0,
+            },
+            Comment {
+                id: "c2".into(),
+                diff_id: "d".into(),
+                file_path: None,
+                line: None,
+                side: None,
+                body: "general".into(),
+                created_at: 0,
+            },
+        ];
+        let md = render_markdown("d", &comments);
+        assert!(md.contains("### `src/lib.rs`:10"));
+        assert!(md.contains("anchored"));
+        assert!(md.contains("### General"));
+    }
+
+    #[test]
+    fn comment_json_uses_camelcase_schema() {
+        // The agent-facing JSON schema is locked to camelCase.
+        let c = Comment {
+            id: "c1".into(),
+            diff_id: "d1".into(),
+            file_path: Some("a.rs".into()),
+            line: Some(3),
+            side: Some("left".into()),
+            body: "x".into(),
+            created_at: 42,
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        for key in ["\"diffId\"", "\"filePath\"", "\"createdAt\""] {
+            assert!(json.contains(key), "missing {key} in {json}");
+        }
+    }
 }

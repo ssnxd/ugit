@@ -223,6 +223,15 @@ pub struct RecentRepo {
     pub last_opened: i64,
 }
 
+/// A diff plus its comment count — a row in `ugit diffs` / the recent-diffs list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffListItem {
+    #[serde(flatten)]
+    pub diff: Diff,
+    pub comment_count: i64,
+}
+
 /// A comment attached to a diff, optionally anchored to a file/line/side.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

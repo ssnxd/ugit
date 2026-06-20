@@ -3,7 +3,7 @@
  * with ugit's theme store. The diff renderer (and the rest of the app) therefore
  * always reflect the user's chosen Shiki theme + light/dark mode.
  */
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { WorkerPoolContextProvider, useWorkerPool } from "@pierre/diffs/react";
 // Vite bundles the package's ESM worker; `?worker` yields a Worker constructor.
 import DiffWorker from "@pierre/diffs/worker/worker.js?worker";
@@ -25,6 +25,30 @@ function ThemeSync() {
   }, [pool, shikiTheme, resolved]);
 
   return null;
+}
+
+/**
+ * Whether the Shiki worker pool has finished initializing. The diff renderer
+ * produces nothing if it mounts before the pool is ready (and doesn't retry), so
+ * the diff view waits on this before mounting.
+ */
+export function useWorkerReady(): boolean {
+  const pool = useWorkerPool();
+  const [ready, setReady] = useState(() => pool?.isInitialized() ?? false);
+
+  useEffect(() => {
+    if (!pool) return;
+    if (pool.isInitialized()) {
+      setReady(true);
+      return;
+    }
+    setReady(false);
+    return pool.subscribeToStatChanges((stats) => {
+      if (stats.managerState === "initialized") setReady(true);
+    });
+  }, [pool]);
+
+  return ready;
 }
 
 export function DiffWorkerProvider({ children }: { children: ReactNode }) {

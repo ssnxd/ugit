@@ -12,8 +12,9 @@ pub mod repo;
 pub mod store;
 
 pub use model::{
-    BranchRef, Comment, CommitInfo, Diff, DiffKind, DiffLine, DiffLineKind, DiffSummary,
-    FileChange, FileDiffDetail, FileStatus, Hunk, RecentRepo, RepoInfo, TagRef, WorktreeInfo,
+    BranchRef, Comment, CommitInfo, Diff, DiffKind, DiffLine, DiffLineKind, DiffListItem,
+    DiffSummary, FileChange, FileDiffDetail, FileStatus, Hunk, RecentRepo, RepoInfo, TagRef,
+    WorktreeInfo,
 };
 
 /// Crate-wide error type. Surfaces map this to their own representation
@@ -28,6 +29,8 @@ pub enum Error {
     NoDataDir,
     #[error("diff not found: {0}")]
     DiffNotFound(String),
+    #[error("comment not found: {0}")]
+    CommentNotFound(String),
     #[error("git error: {0}")]
     Git(String),
 }

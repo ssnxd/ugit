@@ -108,3 +108,13 @@ export function addComment(args: {
     side: args.side ?? null,
   });
 }
+
+/** Edit a comment's body. */
+export function updateComment(id: string, body: string): Promise<Comment> {
+  return invoke<Comment>("update_comment", { id, body });
+}
+
+/** Delete a comment. */
+export function deleteComment(id: string): Promise<void> {
+  return invoke<void>("delete_comment", { id });
+}
