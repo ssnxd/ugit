@@ -69,12 +69,18 @@ collaboration/sync between machines.
 
 ## Epic 2 — Repo introspection (`ugit-core`) — *only to pick refs*
 
-- [ ] List local + remote branches (flag current).
-- [ ] List commits for a ref (paginated log: sha, summary, author, time).
-- [ ] List worktrees.
-- [ ] List tags.
-- [ ] Validate/resolve an arbitrary ref string (for the picker).
-- [ ] Recent-repos list persisted in the store; "open repo" entry point.
+**Cut 1 — core + Tauri commands (done):** `ugit-core::repo` + `recent_repos` store + IPC commands + TS bindings.
+
+- [x] List local + remote branches (flag current). `repo::branches`
+- [x] List commits for a ref (paginated log: sha, summary, author, time). `repo::commits`
+- [x] List worktrees. `repo::worktrees`
+- [x] List tags. `repo::tags`
+- [x] Validate/resolve a ref + repo metadata. `repo::repo_info` (+ `rev_parse_single` in `commits`).
+- [x] Recent-repos list persisted in the store; `open_repo` entry point. `store::record_repo` / `list_recent_repos`.
+
+**Cut 2 — GUI pickers (done):**
+- [x] Folder picker (`tauri-plugin-dialog`) + recent-repos list start screen (`RepoOpener`); top bar shows repo name/branch, click to switch repos.
+- [x] Ref picker (`RefPicker`): searchable popover of branches / tags / commits for left & right, replacing the text inputs. *(worktree-based diffing deferred with dirty-diff support.)*
 
 ## Epic 3 — CLI surface (`ugit-cli`)
 

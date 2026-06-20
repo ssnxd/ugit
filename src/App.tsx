@@ -1,20 +1,22 @@
 import { useEffect, useState } from "react";
 
 import { FileTreeSidebar } from "./components/FileTreeSidebar";
+import { RefPicker } from "./components/RefPicker";
+import { RepoOpener } from "./components/RepoOpener";
 import { EmptyState, ErrorState, Skeleton } from "./components/states";
 import { ThemeControls } from "./components/ThemeControls";
 import { DiffView } from "./diff/DiffView";
 import { diffSummary } from "./lib/ipc";
 import { useTheme } from "./theme/theme";
-import type { DiffSummary } from "./lib/types";
+import type { DiffSummary, RepoInfo } from "./lib/types";
 
 type Status = "idle" | "loading" | "ready" | "error";
-/** The refs that produced the current summary — frozen so editing the inputs
+/** The refs that produced the current summary — frozen so changing the pickers
  *  afterwards doesn't desync the rendered diff. */
 type ActiveDiff = { repoPath: string; left: string; right: string };
 
 function App() {
-  const [repoPath, setRepoPath] = useState("");
+  const [repo, setRepo] = useState<RepoInfo | null>(null);
   const [left, setLeft] = useState("HEAD^");
   const [right, setRight] = useState("HEAD");
 
@@ -52,8 +54,8 @@ function App() {
   }, [summary, selected]);
 
   async function runDiff() {
-    const params = { repoPath: repoPath.trim(), left: left.trim(), right: right.trim() };
-    if (!params.repoPath) return;
+    if (!repo) return;
+    const params = { repoPath: repo.path, left: left.trim(), right: right.trim() };
     setStatus("loading");
     setError("");
     setSelected(null);
@@ -69,32 +71,59 @@ function App() {
     }
   }
 
+  function closeRepo() {
+    setRepo(null);
+    setStatus("idle");
+    setSummary(null);
+    setActive(null);
+    setSelected(null);
+    setError("");
+  }
+
   const selectedFile = summary?.files.find((f) => f.path === selected) ?? null;
+
+  // No repo open yet → the start screen (with a minimal themed top bar).
+  if (!repo) {
+    return (
+      <div className="flex h-full flex-col bg-bg text-ink">
+        <header className="flex h-10 shrink-0 items-center justify-between border-b border-line bg-surface px-3">
+          <span className="font-mono text-md font-semibold tracking-tight text-ink">ugit</span>
+          <ThemeControls />
+        </header>
+        <div className="min-h-0 flex-1">
+          <RepoOpener onOpen={setRepo} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col bg-bg text-ink">
       {/* Top bar */}
       <header className="flex h-10 shrink-0 items-center gap-3 border-b border-line bg-surface px-3">
         <span className="font-mono text-md font-semibold tracking-tight text-ink">ugit</span>
-        <form
-          className="flex flex-1 items-center gap-1.5"
-          onSubmit={(e) => {
-            e.preventDefault();
-            runDiff();
-          }}
+        <button
+          type="button"
+          onClick={closeRepo}
+          title="Open a different repository"
+          className="ease-out-quint flex items-center gap-1 rounded-md px-1.5 py-1 font-mono text-xs text-muted transition-colors hover:bg-raised hover:text-ink"
         >
-          <RefInput value={repoPath} onChange={setRepoPath} placeholder="/path/to/repo" grow />
-          <RefInput value={left} onChange={setLeft} placeholder="left" />
+          <span className="text-ink">{repo.name}</span>
+          {repo.head && <span className="text-faint">@ {repo.head}</span>}
+        </button>
+        <div className="flex flex-1 items-center gap-1.5">
+          <RefPicker repoPath={repo.path} value={left} onChange={setLeft} label="left" />
           <span className="font-mono text-xs text-faint">→</span>
-          <RefInput value={right} onChange={setRight} placeholder="right" />
+          <RefPicker repoPath={repo.path} value={right} onChange={setRight} label="right" />
           <button
-            type="submit"
-            disabled={!repoPath.trim() || status === "loading"}
+            type="button"
+            onClick={runDiff}
+            disabled={status === "loading"}
             className="ease-out-quint rounded-md bg-accent px-3 py-1 text-xs font-medium text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-40"
           >
             Diff
           </button>
-        </form>
+        </div>
         <ThemeControls />
       </header>
 
@@ -122,7 +151,7 @@ function App() {
           {status === "idle" && (
             <EmptyState
               title="Pick something to diff"
-              hint="Enter a repo path and two refs above, then hit Diff."
+              hint="Choose two refs above, then hit Diff."
             />
           )}
           {status === "error" && <ErrorState message={error} onRetry={runDiff} />}
@@ -192,31 +221,6 @@ function App() {
         <span className="ml-auto text-faint">j/k — files · ⌘K — coming soon</span>
       </footer>
     </div>
-  );
-}
-
-function RefInput({
-  value,
-  onChange,
-  placeholder,
-  grow = false,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  grow?: boolean;
-}) {
-  return (
-    <input
-      type="text"
-      value={value}
-      spellCheck={false}
-      onChange={(e) => onChange(e.currentTarget.value)}
-      placeholder={placeholder}
-      className={`ease-out-quint h-7 rounded-md border border-line bg-bg px-2 font-mono text-xs text-ink transition-colors placeholder:text-faint focus:border-line-strong ${
-        grow ? "min-w-0 flex-1" : "w-28"
-      }`}
-    />
   );
 }
 

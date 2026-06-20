@@ -7,7 +7,54 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 
-import type { Comment, Diff, DiffKind, DiffSummary, Hunk } from "./types";
+import type {
+  BranchRef,
+  Comment,
+  CommitInfo,
+  Diff,
+  DiffKind,
+  DiffSummary,
+  Hunk,
+  RecentRepo,
+  RepoInfo,
+  TagRef,
+  WorktreeInfo,
+} from "./types";
+
+/** Validate + open a repo, recording it in the recent list. */
+export function openRepo(repoPath: string): Promise<RepoInfo> {
+  return invoke<RepoInfo>("open_repo", { repoPath });
+}
+
+/** The most-recently-opened repositories. */
+export function recentRepos(limit = 12): Promise<RecentRepo[]> {
+  return invoke<RecentRepo[]>("recent_repos", { limit });
+}
+
+/** Local + remote branches (current flagged). */
+export function branches(repoPath: string): Promise<BranchRef[]> {
+  return invoke<BranchRef[]>("branches", { repoPath });
+}
+
+/** All tags. */
+export function tags(repoPath: string): Promise<TagRef[]> {
+  return invoke<TagRef[]>("tags", { repoPath });
+}
+
+/** All worktrees, including the main one. */
+export function worktrees(repoPath: string): Promise<WorktreeInfo[]> {
+  return invoke<WorktreeInfo[]>("worktrees", { repoPath });
+}
+
+/** The commit log reachable from `rev`, newest first, paginated. */
+export function commits(
+  repoPath: string,
+  rev: string,
+  limit = 50,
+  offset = 0,
+): Promise<CommitInfo[]> {
+  return invoke<CommitInfo[]>("commits", { repoPath, rev, limit, offset });
+}
 
 /** Resolve (creating if needed) the stable diff id for a comparison. */
 export function computeDiff(

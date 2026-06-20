@@ -155,6 +155,74 @@ pub struct FileDiffDetail {
     pub hunks: Vec<Hunk>,
 }
 
+/// A branch reference, for the ref picker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchRef {
+    /// Short name, e.g. `main` or `origin/feature`.
+    pub name: String,
+    /// Full ref name, e.g. `refs/heads/main`.
+    pub full_name: String,
+    /// The commit the branch points at (full hex).
+    pub target: String,
+    pub is_current: bool,
+    pub is_remote: bool,
+}
+
+/// A tag reference.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagRef {
+    pub name: String,
+    pub full_name: String,
+    pub target: String,
+}
+
+/// A single commit, for the commit picker / log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitInfo {
+    pub id: String,
+    pub short_id: String,
+    pub summary: String,
+    pub author_name: String,
+    /// Author/commit time, Unix epoch seconds.
+    pub time: i64,
+}
+
+/// A git worktree attached to a repository.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeInfo {
+    pub path: String,
+    pub is_main: bool,
+    pub is_locked: bool,
+    /// Checked-out branch (short name), when known.
+    pub branch: Option<String>,
+}
+
+/// Top-level metadata about an opened repository.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoInfo {
+    pub path: String,
+    /// Display name (the working directory's folder name).
+    pub name: String,
+    /// Current branch short name, or `None` when detached.
+    pub head: Option<String>,
+    pub detached: bool,
+}
+
+/// A recently opened repository (persisted in the store).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentRepo {
+    pub path: String,
+    pub name: String,
+    /// Unix epoch seconds of the last time it was opened.
+    pub last_opened: i64,
+}
+
 /// A comment attached to a diff, optionally anchored to a file/line/side.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

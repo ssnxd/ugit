@@ -51,6 +51,48 @@ export type FileDiffDetail = {
   hunks: Hunk[];
 };
 
+export type BranchRef = {
+  name: string;
+  fullName: string;
+  target: string;
+  isCurrent: boolean;
+  isRemote: boolean;
+};
+
+export type TagRef = {
+  name: string;
+  fullName: string;
+  target: string;
+};
+
+export type CommitInfo = {
+  id: string;
+  shortId: string;
+  summary: string;
+  authorName: string;
+  time: number;
+};
+
+export type WorktreeInfo = {
+  path: string;
+  isMain: boolean;
+  isLocked: boolean;
+  branch: string | null;
+};
+
+export type RepoInfo = {
+  path: string;
+  name: string;
+  head: string | null;
+  detached: boolean;
+};
+
+export type RecentRepo = {
+  path: string;
+  name: string;
+  lastOpened: number;
+};
+
 export type Diff = {
   id: string;
   repoPath: string;

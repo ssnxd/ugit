@@ -5,7 +5,10 @@
 //! same database (see `ugit_core::store`).
 
 use ugit_core::model::{DiffKind, DiffSummary};
-use ugit_core::{diff, store, Comment, Diff, Hunk};
+use ugit_core::{
+    diff, repo, store, BranchRef, Comment, CommitInfo, Diff, Hunk, RecentRepo, RepoInfo, TagRef,
+    WorktreeInfo,
+};
 
 /// Map a core error to a String so it surfaces as a rejected promise on the frontend.
 fn to_err<E: std::fmt::Display>(e: E) -> String {
@@ -28,6 +31,51 @@ fn compute_diff(
 #[tauri::command]
 fn diff_summary(repo_path: String, left: String, right: String) -> Result<DiffSummary, String> {
     diff::diff_summary(&repo_path, &left, &right).map_err(to_err)
+}
+
+/// Validate and open a repo: record it in the recent list and return its metadata.
+#[tauri::command]
+fn open_repo(repo_path: String) -> Result<RepoInfo, String> {
+    let info = repo::repo_info(&repo_path).map_err(to_err)?;
+    let conn = store::open().map_err(to_err)?;
+    store::record_repo(&conn, &info.path, &info.name).map_err(to_err)?;
+    Ok(info)
+}
+
+/// The most-recently-opened repositories.
+#[tauri::command]
+fn recent_repos(limit: usize) -> Result<Vec<RecentRepo>, String> {
+    let conn = store::open().map_err(to_err)?;
+    store::list_recent_repos(&conn, limit).map_err(to_err)
+}
+
+/// Local + remote branches, current branch flagged.
+#[tauri::command]
+fn branches(repo_path: String) -> Result<Vec<BranchRef>, String> {
+    repo::branches(&repo_path).map_err(to_err)
+}
+
+/// All tags.
+#[tauri::command]
+fn tags(repo_path: String) -> Result<Vec<TagRef>, String> {
+    repo::tags(&repo_path).map_err(to_err)
+}
+
+/// All worktrees, including the main one.
+#[tauri::command]
+fn worktrees(repo_path: String) -> Result<Vec<WorktreeInfo>, String> {
+    repo::worktrees(&repo_path).map_err(to_err)
+}
+
+/// The commit log reachable from `rev`, newest first, paginated.
+#[tauri::command]
+fn commits(
+    repo_path: String,
+    rev: String,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<CommitInfo>, String> {
+    repo::commits(&repo_path, &rev, limit, offset).map_err(to_err)
 }
 
 /// Line-level hunks for a single file (the lazy, per-file path the diff view uses).
@@ -78,7 +126,9 @@ fn add_comment(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init());
 
     #[cfg(desktop)]
     {
@@ -104,6 +154,12 @@ pub fn run() {
             diff_summary,
             file_hunks,
             file_content,
+            open_repo,
+            recent_repos,
+            branches,
+            tags,
+            worktrees,
+            commits,
             list_comments,
             add_comment
         ])

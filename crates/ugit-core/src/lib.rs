@@ -8,11 +8,12 @@
 
 pub mod diff;
 pub mod model;
+pub mod repo;
 pub mod store;
 
 pub use model::{
-    Comment, Diff, DiffKind, DiffLine, DiffLineKind, DiffSummary, FileChange, FileDiffDetail,
-    FileStatus, Hunk,
+    BranchRef, Comment, CommitInfo, Diff, DiffKind, DiffLine, DiffLineKind, DiffSummary,
+    FileChange, FileDiffDetail, FileStatus, Hunk, RecentRepo, RepoInfo, TagRef, WorktreeInfo,
 };
 
 /// Crate-wide error type. Surfaces map this to their own representation

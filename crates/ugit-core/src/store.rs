@@ -16,7 +16,7 @@ use directories::BaseDirs;
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
-use crate::model::{Comment, Diff, DiffKind};
+use crate::model::{Comment, Diff, DiffKind, RecentRepo};
 use crate::{Error, Result};
 
 /// Application identifier. MUST stay in sync with `identifier` in
@@ -77,7 +77,12 @@ fn migrate(conn: &Connection) -> Result<()> {
             body       TEXT NOT NULL,
             created_at INTEGER NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_comments_diff ON comments(diff_id);",
+        CREATE INDEX IF NOT EXISTS idx_comments_diff ON comments(diff_id);
+        CREATE TABLE IF NOT EXISTS recent_repos (
+            path        TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            last_opened INTEGER NOT NULL
+        );",
     )?;
     Ok(())
 }
@@ -219,6 +224,36 @@ pub fn comments_for_diff(conn: &Connection, diff_id: &str) -> Result<Vec<Comment
     Ok(out)
 }
 
+/// Record (or refresh) a repository in the recent list, stamping it as just opened.
+pub fn record_repo(conn: &Connection, path: &str, name: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO recent_repos (path, name, last_opened) VALUES (?1, ?2, ?3)
+         ON CONFLICT(path) DO UPDATE SET name = excluded.name, last_opened = excluded.last_opened",
+        params![path, name, now()],
+    )?;
+    Ok(())
+}
+
+/// The most-recently-opened repositories, newest first.
+pub fn list_recent_repos(conn: &Connection, limit: usize) -> Result<Vec<RecentRepo>> {
+    let mut stmt = conn.prepare(
+        "SELECT path, name, last_opened FROM recent_repos
+         ORDER BY last_opened DESC LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit as i64], |row| {
+        Ok(RecentRepo {
+            path: row.get(0)?,
+            name: row.get(1)?,
+            last_opened: row.get(2)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 fn row_to_diff(row: &rusqlite::Row) -> rusqlite::Result<Diff> {
     let kind_str: String = row.get(4)?;
     Ok(Diff {
@@ -291,6 +326,21 @@ mod tests {
         let b = open_at(&path).unwrap();
         add_comment(&b, &diff_id, None, None, None, "from the other process").unwrap();
         assert_eq!(comments_for_diff(&b, &diff_id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn recent_repos_upsert_and_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_at(dir.path().join("ugit.db")).unwrap();
+
+        record_repo(&conn, "/a", "a").unwrap();
+        record_repo(&conn, "/b", "b").unwrap();
+        record_repo(&conn, "/a", "a-renamed").unwrap(); // re-open a → most recent
+
+        let recents = list_recent_repos(&conn, 10).unwrap();
+        assert_eq!(recents.len(), 2, "upsert, not duplicate");
+        assert_eq!(recents[0].path, "/a");
+        assert_eq!(recents[0].name, "a-renamed");
     }
 
     #[test]
