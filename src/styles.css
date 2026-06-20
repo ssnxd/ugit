@@ -1,0 +1,176 @@
+@import "tailwindcss";
+
+/* Dark is the default class; the theme store swaps `dark`/`light` on <html>. */
+@variant light (&:where(.light, .light *));
+
+/*
+ * Tailwind token bridge. Each Tailwind color/scale token points at a live
+ * `--ug-*` custom property, so utilities (bg-bg, text-ink, border-line, …)
+ * re-theme automatically when the `--ug-*` values change under .light/.dark
+ * or when the Shiki theme adapter repaints them (Epic 4).
+ */
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --color-bg: var(--ug-bg);
+  --color-surface: var(--ug-surface);
+  --color-raised: var(--ug-surface-raised);
+  --color-line: var(--ug-border);
+  --color-line-strong: var(--ug-border-strong);
+  --color-ink: var(--ug-ink);
+  --color-muted: var(--ug-muted);
+  --color-faint: var(--ug-faint);
+  --color-accent: var(--ug-accent);
+  --color-accent-ink: var(--ug-accent-ink);
+
+  /* Fixed product type scale (no fluid clamps) — see DESIGN.md */
+  --text-xs: 0.6875rem; /* 11px */
+  --text-sm: 0.75rem; /* 12px */
+  --text-base: 0.8125rem; /* 13px */
+  --text-md: 0.875rem; /* 14px */
+  --text-lg: 1.0625rem; /* 17px */
+  --text-xl: 1.3125rem; /* 21px */
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+}
+
+/*
+ * The chrome token contract. DARK is the baseline (:root) so the app renders
+ * correctly with no class and before any theme load; .light overrides.
+ * Values are OKLCH, refined cool-neutral (the Linear register).
+ */
+:root {
+  --ug-bg: oklch(0.178 0.005 265);
+  --ug-surface: oklch(0.212 0.006 265);
+  --ug-surface-raised: oklch(0.246 0.007 265);
+  --ug-border: oklch(0.3 0.008 265);
+  --ug-border-strong: oklch(0.38 0.01 265);
+
+  --ug-ink: oklch(0.94 0.004 265);
+  --ug-muted: oklch(0.68 0.006 265);
+  --ug-faint: oklch(0.56 0.006 265);
+
+  --ug-accent: oklch(0.64 0.13 250);
+  --ug-accent-ink: oklch(0.985 0 0);
+  --ug-focus: oklch(0.7 0.14 250);
+
+  /* Diff colors — colorblind-safe default (added=blue, removed=orange).
+     Switch to classic red/green by adding `.diff-classic` on <html>. */
+  --ug-diff-add-bg: oklch(0.3 0.045 230);
+  --ug-diff-add-line: oklch(0.72 0.12 230);
+  --ug-diff-del-bg: oklch(0.32 0.055 55);
+  --ug-diff-del-line: oklch(0.76 0.12 55);
+
+  /* Semantic elevation + z-scale */
+  --ug-shadow-overlay: 0 8px 30px -8px oklch(0 0 0 / 0.5), 0 2px 8px -4px oklch(0 0 0 / 0.4);
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-backdrop: 300;
+  --z-modal: 400;
+  --z-toast: 500;
+  --z-tooltip: 600;
+}
+
+.light {
+  --ug-bg: oklch(0.995 0 0);
+  --ug-surface: oklch(0.975 0.002 265);
+  --ug-surface-raised: oklch(1 0 0);
+  --ug-border: oklch(0.9 0.004 265);
+  --ug-border-strong: oklch(0.82 0.006 265);
+
+  --ug-ink: oklch(0.26 0.01 265);
+  --ug-muted: oklch(0.48 0.01 265);
+  --ug-faint: oklch(0.62 0.008 265);
+
+  --ug-accent: oklch(0.56 0.15 250);
+  --ug-accent-ink: oklch(0.995 0 0);
+  --ug-focus: oklch(0.56 0.15 250);
+
+  --ug-diff-add-bg: oklch(0.93 0.04 230);
+  --ug-diff-add-line: oklch(0.5 0.12 230);
+  --ug-diff-del-bg: oklch(0.94 0.05 55);
+  --ug-diff-del-line: oklch(0.55 0.13 55);
+
+  --ug-shadow-overlay: 0 8px 30px -10px oklch(0 0 0 / 0.18), 0 2px 8px -4px oklch(0 0 0 / 0.12);
+}
+
+.diff-classic {
+  --ug-diff-add-bg: oklch(0.3 0.06 150);
+  --ug-diff-add-line: oklch(0.74 0.16 150);
+  --ug-diff-del-bg: oklch(0.32 0.08 25);
+  --ug-diff-del-line: oklch(0.7 0.18 25);
+}
+
+.light.diff-classic {
+  --ug-diff-add-bg: oklch(0.93 0.05 150);
+  --ug-diff-add-line: oklch(0.5 0.14 150);
+  --ug-diff-del-bg: oklch(0.94 0.06 25);
+  --ug-diff-del-line: oklch(0.55 0.16 25);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--ug-bg);
+    color: var(--ug-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* The app is a fixed window, not a scrolling document. */
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* Editable and code surfaces stay selectable. */
+  input,
+  textarea,
+  [contenteditable],
+  code,
+  pre {
+    user-select: text;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklch, var(--ug-accent) 30%, transparent);
+  }
+
+  /* Quiet, theme-aware scrollbars (no reinvented scrollbar UI — just toned). */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--ug-border) transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ug-focus);
+    outline-offset: 1px;
+    border-radius: var(--radius-sm);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* Shared easing for intentional motion (ease-out, no bounce). */
+@layer utilities {
+  .ease-out-quint {
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}

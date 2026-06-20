@@ -120,6 +120,39 @@ pub fn insert_diff(
     Ok(diff)
 }
 
+/// Get the diff for this exact comparison, creating it only if it doesn't exist.
+///
+/// Diffs are deduped by `(repo_path, left_ref, right_ref, kind)` so that
+/// re-opening the same comparison (from the GUI or the CLI, now or later) returns
+/// the *same* id — and therefore the same accumulated comments. Without this,
+/// every `ugit diff` would mint a fresh id and comments would scatter.
+pub fn get_or_create_diff(
+    conn: &Connection,
+    repo_path: &str,
+    left_ref: &str,
+    right_ref: &str,
+    kind: DiffKind,
+) -> Result<Diff> {
+    let existing = conn
+        .query_row(
+            "SELECT id, repo_path, left_ref, right_ref, kind, created_at
+             FROM diffs
+             WHERE repo_path = ?1 AND left_ref = ?2 AND right_ref = ?3 AND kind = ?4",
+            params![repo_path, left_ref, right_ref, kind.as_str()],
+            row_to_diff,
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(Error::Sqlite(other)),
+        })?;
+
+    match existing {
+        Some(diff) => Ok(diff),
+        None => insert_diff(conn, repo_path, left_ref, right_ref, kind),
+    }
+}
+
 /// Look up a diff by id.
 pub fn get_diff(conn: &Connection, id: &str) -> Result<Diff> {
     conn.query_row(

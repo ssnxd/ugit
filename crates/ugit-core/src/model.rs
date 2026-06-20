@@ -44,6 +44,7 @@ impl DiffKind {
 /// A persisted diff. Its `id` is what users pass to `ugit comment <diff-id>`
 /// and what comments hang off of.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Diff {
     pub id: String,
     pub repo_path: String,
@@ -54,8 +55,60 @@ pub struct Diff {
     pub created_at: i64,
 }
 
+/// How a single file changed between the two sides of a diff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FileStatus {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+    Copied,
+}
+
+impl FileStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FileStatus::Added => "added",
+            FileStatus::Modified => "modified",
+            FileStatus::Deleted => "deleted",
+            FileStatus::Renamed => "renamed",
+            FileStatus::Copied => "copied",
+        }
+    }
+}
+
+/// One changed file in a diff. This is the file-list level; line-level hunks are
+/// computed separately and on demand (see [`crate::diff`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChange {
+    /// The file's path on the *right* side (or its old path, for a deletion).
+    pub path: String,
+    /// For renames/copies, the file's path on the *left* side.
+    pub old_path: Option<String>,
+    pub status: FileStatus,
+    /// True when either side is binary (no line-level diff is meaningful).
+    pub binary: bool,
+    /// Lines added (0 for binary files).
+    pub additions: u32,
+    /// Lines removed (0 for binary files).
+    pub deletions: u32,
+}
+
+/// The file-level summary of a diff between two refs — the backbone the GUI's
+/// file tree and the CLI's listing both render.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffSummary {
+    pub files: Vec<FileChange>,
+    pub total_additions: u32,
+    pub total_deletions: u32,
+}
+
 /// A comment attached to a diff, optionally anchored to a file/line/side.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Comment {
     pub id: String,
     pub diff_id: String,

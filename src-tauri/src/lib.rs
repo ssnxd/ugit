@@ -4,7 +4,7 @@
 //! shared store and delegates. Both surfaces therefore read and write the exact
 //! same database (see `ugit_core::store`).
 
-use ugit_core::model::DiffKind;
+use ugit_core::model::{DiffKind, DiffSummary};
 use ugit_core::{diff, store, Comment, Diff};
 
 /// Map a core error to a String so it surfaces as a rejected promise on the frontend.
@@ -22,6 +22,12 @@ fn compute_diff(
 ) -> Result<Diff, String> {
     let conn = store::open().map_err(to_err)?;
     diff::compute_diff(&conn, &repo_path, &left, &right, kind).map_err(to_err)
+}
+
+/// The file-level summary of a diff between two refs (no persistence needed).
+#[tauri::command]
+fn diff_summary(repo_path: String, left: String, right: String) -> Result<DiffSummary, String> {
+    diff::diff_summary(&repo_path, &left, &right).map_err(to_err)
 }
 
 /// All comments on a diff — the same data `ugit comment <diff-id>` exports.
@@ -77,6 +83,7 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             compute_diff,
+            diff_summary,
             list_comments,
             add_comment
         ])

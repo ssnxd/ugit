@@ -8,7 +8,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
-use ugit_core::model::DiffKind;
+use ugit_core::model::{DiffKind, DiffSummary, FileStatus};
 use ugit_core::{diff, store, Comment};
 
 #[derive(Parser)]
@@ -104,7 +104,11 @@ fn main() -> Result<()> {
         } => {
             let diff = diff::compute_diff(&conn, &repo, &left, &right, kind.into())
                 .context("computing diff")?;
+            let summary = diff::diff_summary(&repo, &left, &right).context("computing diff")?;
+            // First line is the stable diff-id so `id=$(ugit diff a b | head -1)`
+            // keeps working; the file summary follows on stderr-free stdout.
             println!("{}", diff.id);
+            print!("{}", render_summary(&summary));
         }
 
         Command::Comment { diff_id, format } => {
@@ -138,6 +142,43 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// A `git diff --stat`-style listing of a diff's changed files.
+fn render_summary(summary: &DiffSummary) -> String {
+    if summary.files.is_empty() {
+        return "no changes\n".to_string();
+    }
+    let mut out = String::new();
+    for f in &summary.files {
+        let letter = match f.status {
+            FileStatus::Added => 'A',
+            FileStatus::Modified => 'M',
+            FileStatus::Deleted => 'D',
+            FileStatus::Renamed => 'R',
+            FileStatus::Copied => 'C',
+        };
+        let path = match &f.old_path {
+            Some(old) => format!("{old} -> {}", f.path),
+            None => f.path.clone(),
+        };
+        if f.binary {
+            out.push_str(&format!("  {letter}  {path} (binary)\n"));
+        } else {
+            out.push_str(&format!(
+                "  {letter}  {path}  +{} -{}\n",
+                f.additions, f.deletions
+            ));
+        }
+    }
+    out.push_str(&format!(
+        "{} file{} changed, +{} -{}\n",
+        summary.files.len(),
+        if summary.files.len() == 1 { "" } else { "s" },
+        summary.total_additions,
+        summary.total_deletions,
+    ));
+    out
 }
 
 fn render_markdown(diff_id: &str, comments: &[Comment]) -> String {
