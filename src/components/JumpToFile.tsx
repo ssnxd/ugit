@@ -1,5 +1,5 @@
 /** A ⌘P-style fuzzy jumper over the diff's changed files. Opened with `p`. */
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import type { FileChange, FileStatus } from "../lib/types";
 
@@ -10,6 +10,8 @@ const GLYPH: Record<FileStatus, string> = {
   renamed: "R",
   copied: "C",
 };
+
+const MAX_VISIBLE = 200;
 
 export function JumpToFile({
   files,
@@ -23,12 +25,17 @@ export function JumpToFile({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
 
+  // Precompute lowercase paths once; filter against the deferred query so typing
+  // stays responsive even at thousands of files; cap rendered rows.
+  const indexed = useMemo(() => files.map((f) => ({ f, hay: f.path.toLowerCase() })), [files]);
+  const deferredQuery = useDeferredValue(query);
   const matches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return q ? files.filter((f) => f.path.toLowerCase().includes(q)) : files;
-  }, [files, query]);
+    const q = deferredQuery.trim().toLowerCase();
+    const hits = q ? indexed.filter((x) => x.hay.includes(q)) : indexed;
+    return hits.slice(0, MAX_VISIBLE).map((x) => x.f);
+  }, [indexed, deferredQuery]);
 
-  useEffect(() => setActive(0), [query]);
+  useEffect(() => setActive(0), [deferredQuery]);
   useEffect(() => {
     document.getElementById(`jump-opt-${active}`)?.scrollIntoView({ block: "nearest" });
   }, [active]);

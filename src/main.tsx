@@ -7,17 +7,16 @@ import "./styles.css";
 
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { DiffWorkerProvider } from "./diff/DiffWorkerProvider";
 import { ThemeProvider } from "./theme/theme";
 
+// Note: the diff worker pool (DiffWorkerProvider) is mounted *inside* App only
+// once a repo is open, so the empty start screen never boots the Shiki worker.
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ThemeProvider>
-      <DiffWorkerProvider>
-        <ErrorBoundary>
-          <App />
-        </ErrorBoundary>
-      </DiffWorkerProvider>
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </ThemeProvider>
   </React.StrictMode>,
 );

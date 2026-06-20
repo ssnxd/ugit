@@ -208,5 +208,9 @@
 .ugit-diff {
   display: block;
   width: 100%;
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
   font-size: var(--text-sm);
 }

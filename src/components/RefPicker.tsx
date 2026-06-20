@@ -1,13 +1,30 @@
 /** A ref chooser: a button showing the current ref that opens a searchable
  *  popover of branches, tags, and recent commits. Selecting one sets the ref.
  *  Worktree-based diffing is deferred (we only diff tree-to-tree today). */
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-import { branches, commits, tags } from "../lib/ipc";
+import { refData } from "../lib/ipc";
 import type { BranchRef, CommitInfo, TagRef } from "../lib/types";
 
 type RefData = { branches: BranchRef[]; tags: TagRef[]; commits: CommitInfo[] };
-type RefItem = { key: string; ref: string; primary: string; secondary?: string; group: string };
+// Each item carries a precomputed lowercase haystack so filtering never lowercases per keystroke.
+type RefItem = {
+  key: string;
+  ref: string;
+  primary: string;
+  secondary?: string;
+  group: string;
+  hay: string;
+};
+const MAX_VISIBLE = 200; // cap rendered rows; the rest are filtered to via search
 
 export function RefPicker({
   repoPath,
@@ -26,13 +43,13 @@ export function RefPicker({
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
-  // Load ref data once, on first open.
+  // Load ref data once, on first open — one IPC round-trip (ref_data).
   useEffect(() => {
     if (!open || data) return;
     let cancelled = false;
-    Promise.all([branches(repoPath), tags(repoPath), commits(repoPath, "HEAD", 30, 0)])
-      .then(([b, t, c]) => {
-        if (!cancelled) setData({ branches: b, tags: t, commits: c });
+    refData(repoPath)
+      .then((d) => {
+        if (!cancelled) setData(d);
       })
       .catch(() => {
         if (!cancelled) setData({ branches: [], tags: [], commits: [] });
@@ -89,40 +106,55 @@ export function RefPicker({
     triggerRef.current?.focus();
   }
 
-  // One flat, filtered, group-tagged list — the unit of keyboard navigation.
-  const items = useMemo<RefItem[] | null>(() => {
-    if (!data) return null;
-    const q = query.trim().toLowerCase();
-    const m = (s: string) => !q || s.toLowerCase().includes(q);
+  // The full flat list, built once per data load with a precomputed lowercase
+  // haystack so filtering never lowercases per keystroke.
+  const allItems = useMemo<RefItem[]>(() => {
+    if (!data) return [];
     const out: RefItem[] = [];
     for (const b of data.branches) {
-      if (m(b.name))
-        out.push({
-          key: b.fullName,
-          ref: b.name,
-          primary: b.name,
-          secondary: b.isCurrent ? "current" : b.isRemote ? "remote" : undefined,
-          group: "Branches",
-        });
+      out.push({
+        key: b.fullName,
+        ref: b.name,
+        primary: b.name,
+        secondary: b.isCurrent ? "current" : b.isRemote ? "remote" : undefined,
+        group: "Branches",
+        hay: b.name.toLowerCase(),
+      });
     }
     for (const t of data.tags) {
-      if (m(t.name)) out.push({ key: t.fullName, ref: t.name, primary: t.name, group: "Tags" });
+      out.push({
+        key: t.fullName,
+        ref: t.name,
+        primary: t.name,
+        group: "Tags",
+        hay: t.name.toLowerCase(),
+      });
     }
     for (const c of data.commits) {
-      if (m(c.summary) || m(c.shortId))
-        out.push({
-          key: c.id,
-          ref: c.id,
-          primary: c.summary,
-          secondary: c.shortId,
-          group: "Commits",
-        });
+      out.push({
+        key: c.id,
+        ref: c.id,
+        primary: c.summary,
+        secondary: c.shortId,
+        group: "Commits",
+        hay: `${c.summary} ${c.shortId}`.toLowerCase(),
+      });
     }
     return out;
-  }, [data, query]);
+  }, [data]);
+
+  // Filter against the *deferred* query so typing never blocks on a big list,
+  // and cap rendered rows.
+  const deferredQuery = useDeferredValue(query);
+  const items = useMemo<RefItem[] | null>(() => {
+    if (!data) return null;
+    const q = deferredQuery.trim().toLowerCase();
+    const matched = q ? allItems.filter((it) => it.hay.includes(q)) : allItems;
+    return matched.slice(0, MAX_VISIBLE);
+  }, [data, allItems, deferredQuery]);
 
   const [activeIndex, setActiveIndex] = useState(0);
-  useEffect(() => setActiveIndex(0), [query, open]);
+  useEffect(() => setActiveIndex(0), [deferredQuery, open]);
   useEffect(() => {
     if (open)
       document.getElementById(`ref-opt-${activeIndex}`)?.scrollIntoView({ block: "nearest" });

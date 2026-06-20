@@ -4,11 +4,22 @@
 //! shared store and delegates. Both surfaces therefore read and write the exact
 //! same database (see `ugit_core::store`).
 
+use serde::Serialize;
+
 use ugit_core::model::{DiffKind, DiffSummary};
 use ugit_core::{
     diff, repo, store, BranchRef, Comment, CommitInfo, Diff, Hunk, RecentRepo, RepoInfo, TagRef,
     WorktreeInfo,
 };
+
+/// All the refs a picker needs, batched into one IPC round-trip.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RefData {
+    branches: Vec<BranchRef>,
+    tags: Vec<TagRef>,
+    commits: Vec<CommitInfo>,
+}
 
 /// Map a core error to a String so it surfaces as a rejected promise on the frontend.
 fn to_err<E: std::fmt::Display>(e: E) -> String {
@@ -67,6 +78,16 @@ fn worktrees(repo_path: String) -> Result<Vec<WorktreeInfo>, String> {
     repo::worktrees(&repo_path).map_err(to_err)
 }
 
+/// Branches, tags, and recent commits in one call — for the ref picker.
+#[tauri::command]
+fn ref_data(repo_path: String) -> Result<RefData, String> {
+    Ok(RefData {
+        branches: repo::branches(&repo_path).map_err(to_err)?,
+        tags: repo::tags(&repo_path).map_err(to_err)?,
+        commits: repo::commits(&repo_path, "HEAD", 50, 0).map_err(to_err)?,
+    })
+}
+
 /// The commit log reachable from `rev`, newest first, paginated.
 #[tauri::command]
 fn commits(
@@ -84,6 +105,13 @@ fn commits(
 fn get_diff(id: String) -> Result<Diff, String> {
     let conn = store::open().map_err(to_err)?;
     store::get_diff(&conn, &id).map_err(to_err)
+}
+
+/// The full diff as a git-style unified patch — the GUI parses it into a
+/// virtualized multi-file view.
+#[tauri::command]
+fn unified_diff(repo_path: String, left: String, right: String) -> Result<String, String> {
+    diff::unified_diff(&repo_path, &left, &right).map_err(to_err)
 }
 
 /// Line-level hunks for a single file (the lazy, per-file path the diff view uses).
@@ -170,13 +198,17 @@ pub fn run() {
                     let _ = app.deep_link().register_all();
                 }
 
-                // Check for updates from GitHub Releases on launch, silently
-                // doing nothing if there is no update or the check fails.
+                // Check for updates from GitHub Releases — but not during the
+                // first interactive moments. Wait until the app has settled so
+                // the check never competes with launch/first diff.
                 let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = check_for_updates(handle).await {
-                        eprintln!("update check failed: {e}");
-                    }
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = check_for_updates(handle).await {
+                            eprintln!("update check failed: {e}");
+                        }
+                    });
                 });
                 Ok(())
             });
@@ -186,6 +218,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             compute_diff,
             diff_summary,
+            unified_diff,
             file_hunks,
             file_content,
             get_diff,
@@ -195,6 +228,7 @@ pub fn run() {
             tags,
             worktrees,
             commits,
+            ref_data,
             list_comments,
             add_comment,
             update_comment,

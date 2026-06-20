@@ -46,6 +46,13 @@ export function worktrees(repoPath: string): Promise<WorktreeInfo[]> {
   return invoke<WorktreeInfo[]>("worktrees", { repoPath });
 }
 
+/** Branches, tags, and recent commits in one round-trip (for the ref picker). */
+export function refData(
+  repoPath: string,
+): Promise<{ branches: BranchRef[]; tags: TagRef[]; commits: CommitInfo[] }> {
+  return invoke("ref_data", { repoPath });
+}
+
 /** The commit log reachable from `rev`, newest first, paginated. */
 export function commits(
   repoPath: string,
@@ -69,6 +76,11 @@ export function computeDiff(
 /** The file-level summary of a diff between two refs (no persistence). */
 export function diffSummary(repoPath: string, left: string, right: string): Promise<DiffSummary> {
   return invoke<DiffSummary>("diff_summary", { repoPath, left, right });
+}
+
+/** The whole diff as a git-style unified patch (parsed into the multi-file view). */
+export function unifiedDiff(repoPath: string, left: string, right: string): Promise<string> {
+  return invoke<string>("unified_diff", { repoPath, left, right });
 }
 
 /** Look up a persisted diff by id (for the `ugit open` deep-link handoff). */
