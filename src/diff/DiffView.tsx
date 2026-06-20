@@ -16,7 +16,7 @@ import { useWorkerReady } from "./DiffWorkerProvider";
 type Side = "left" | "right";
 type Anchor = { line: number; side: Side };
 type Anno =
-  | { kind: "thread"; anchor: Anchor; comments: Comment[] }
+  | { kind: "thread"; anchor: Anchor; comments: Comment[]; stale: boolean }
   | { kind: "draft"; anchor: Anchor };
 
 const toDiffsSide = (s: Side): AnnotationSide => (s === "right" ? "additions" : "deletions");
@@ -44,7 +44,13 @@ export function DiffView({
   file: FileChange;
   diffStyle: "split" | "unified";
   comments: Comment[];
-  onAdd: (args: { filePath: string; line: number; side: Side; body: string }) => void;
+  onAdd: (args: {
+    filePath: string;
+    line: number;
+    side: Side;
+    body: string;
+    lineContent: string | null;
+  }) => void;
   onEdit: (id: string, body: string) => void;
   onDelete: (id: string) => void;
 }) {
@@ -80,6 +86,13 @@ export function DiffView({
   // Group this file's anchored comments into one thread per (line, side), plus
   // the open draft, as diffs.com line annotations.
   const lineAnnotations = useMemo<DiffLineAnnotation<Anno>[]>(() => {
+    const ready = load.status === "ready" ? load : null;
+    const lineAt = (side: Side, line: number): string | null => {
+      if (!ready) return null;
+      const text = side === "right" ? ready.newContents : ready.oldContents;
+      return text.split("\n")[line - 1] ?? null;
+    };
+
     const threads = new Map<string, { anchor: Anchor; comments: Comment[] }>();
     for (const c of comments) {
       if (c.filePath !== file.path || c.line == null) continue;
@@ -91,10 +104,15 @@ export function DiffView({
     }
     const out: DiffLineAnnotation<Anno>[] = [];
     for (const { anchor, comments: cs } of threads.values()) {
+      // Stale if the line's current text no longer matches the most recent
+      // snapshot taken when a comment was made there.
+      const snap = [...cs].reverse().find((c) => c.lineContent != null)?.lineContent ?? null;
+      const current = lineAt(anchor.side, anchor.line);
+      const stale = snap != null && current != null && snap !== current;
       out.push({
         side: toDiffsSide(anchor.side),
         lineNumber: anchor.line,
-        metadata: { kind: "thread", anchor, comments: cs },
+        metadata: { kind: "thread", anchor, comments: cs, stale },
       });
     }
     if (draft) {
@@ -105,7 +123,7 @@ export function DiffView({
       });
     }
     return out;
-  }, [comments, file.path, draft]);
+  }, [comments, file.path, draft, load]);
 
   if (file.binary) {
     return <EmptyState title="Binary file" hint={`${file.path} — no text diff to show.`} />;
@@ -121,6 +139,26 @@ export function DiffView({
   }
   if (load.status === "error") {
     return <ErrorState message={load.message} />;
+  }
+
+  // `load` is now the ready variant — the anchored line's current text, for the
+  // comment's stale-detection snapshot.
+  const ready = load;
+  const lineAt = (side: Side, line: number): string | null => {
+    const text = side === "right" ? ready.newContents : ready.oldContents;
+    return text.split("\n")[line - 1] ?? null;
+  };
+
+  // Both sides empty while the file reports changes → the core declined to read
+  // it as text (too large or non-UTF-8).
+  if (
+    ready.oldContents === "" &&
+    ready.newContents === "" &&
+    (file.additions > 0 || file.deletions > 0)
+  ) {
+    return (
+      <EmptyState title="Not shown" hint={`${file.path} — too large or not displayable as text.`} />
+    );
   }
 
   return (
@@ -161,11 +199,13 @@ export function DiffView({
         ann.metadata.kind === "draft" ? (
           <InlineComposer
             onSubmit={(body) => {
+              const a = ann.metadata.anchor;
               onAdd({
                 filePath: file.path,
-                line: ann.metadata.anchor.line,
-                side: ann.metadata.anchor.side,
+                line: a.line,
+                side: a.side,
                 body,
+                lineContent: lineAt(a.side, a.line),
               });
               setDraft(null);
             }}
@@ -174,14 +214,17 @@ export function DiffView({
         ) : (
           <InlineThread
             comments={ann.metadata.comments}
-            onReply={(body) =>
+            stale={ann.metadata.stale}
+            onReply={(body) => {
+              const a = ann.metadata.anchor;
               onAdd({
                 filePath: file.path,
-                line: ann.metadata.anchor.line,
-                side: ann.metadata.anchor.side,
+                line: a.line,
+                side: a.side,
                 body,
-              })
-            }
+                lineContent: lineAt(a.side, a.line),
+              });
+            }}
             onEdit={onEdit}
             onDelete={onDelete}
           />
@@ -265,7 +308,8 @@ function InlineComposer({
       <div style={{ display: "flex", gap: "6px", marginTop: "6px" }}>
         <button
           type="button"
-          style={primaryBtn}
+          disabled={!body.trim()}
+          style={{ ...primaryBtn, opacity: body.trim() ? 1 : 0.4 }}
           onClick={() => body.trim() && onSubmit(body.trim())}
         >
           Comment
@@ -280,11 +324,13 @@ function InlineComposer({
 
 function InlineThread({
   comments,
+  stale,
   onReply,
   onEdit,
   onDelete,
 }: {
   comments: Comment[];
+  stale: boolean;
   onReply: (body: string) => void;
   onEdit: (id: string, body: string) => void;
   onDelete: (id: string) => void;
@@ -294,6 +340,21 @@ function InlineThread({
 
   return (
     <div style={cardStyle}>
+      {stale && (
+        <div
+          title="The line this comment was made on has since changed"
+          style={{
+            padding: "3px 8px",
+            borderBottom: "1px solid var(--ug-border)",
+            background: "color-mix(in oklch, var(--ug-diff-del-line) 14%, transparent)",
+            color: "var(--ug-diff-del-line)",
+            fontSize: "11px",
+            fontWeight: 500,
+          }}
+        >
+          ⚠ stale — line changed since this comment
+        </div>
+      )}
       {comments.map((c, i) => (
         <div
           key={c.id}

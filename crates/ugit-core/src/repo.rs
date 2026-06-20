@@ -8,7 +8,10 @@ use crate::model::{BranchRef, CommitInfo, RepoInfo, TagRef, WorktreeInfo};
 use crate::{Error, Result};
 
 fn open(repo_path: &str) -> Result<gix::Repository> {
-    gix::open(repo_path).map_err(|e| Error::Git(e.to_string()))
+    let mut repo = gix::open(repo_path).map_err(|e| Error::Git(e.to_string()))?;
+    // Cache decoded objects (commit-log walks re-touch the same objects).
+    repo.object_cache_size_if_unset(8 * 1024 * 1024);
+    Ok(repo)
 }
 
 /// Top-level metadata: display name and the current branch (or detached state).
@@ -45,11 +48,16 @@ pub fn branches(repo_path: &str) -> Result<Vec<BranchRef>> {
     let mut collect = |iter: gix::reference::iter::Iter<'_, '_>, is_remote: bool| -> Result<()> {
         for reference in iter {
             let reference = reference.map_err(|e| Error::Git(e.to_string()))?;
+            // Skip symbolic refs (e.g. `refs/remotes/origin/HEAD`, an alias) —
+            // `try_id` is None for them, and `.id()` would panic.
+            let Some(id) = reference.try_id() else {
+                continue;
+            };
             let full_name = reference.name().as_bstr().to_string();
             out.push(BranchRef {
                 name: reference.name().shorten().to_string(),
                 is_current: !is_remote && current.as_deref() == Some(full_name.as_str()),
-                target: reference.id().to_string(),
+                target: id.to_string(),
                 full_name,
                 is_remote,
             });
@@ -79,10 +87,13 @@ pub fn tags(repo_path: &str) -> Result<Vec<TagRef>> {
     let mut out = Vec::new();
     for reference in platform.tags().map_err(|e| Error::Git(e.to_string()))? {
         let reference = reference.map_err(|e| Error::Git(e.to_string()))?;
+        let Some(id) = reference.try_id() else {
+            continue;
+        };
         out.push(TagRef {
             name: reference.name().shorten().to_string(),
             full_name: reference.name().as_bstr().to_string(),
-            target: reference.id().to_string(),
+            target: id.to_string(),
         });
     }
     Ok(out)
@@ -207,6 +218,30 @@ mod tests {
     }
 
     #[test]
+    fn branches_skip_symbolic_refs_without_panicking() {
+        // Regression: a symbolic ref like `refs/remotes/origin/HEAD` (present in
+        // every clone) panicked `Reference::id()`. branches() must skip it.
+        let dir = fixture();
+        let p = dir.path();
+        git(p, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(
+            p,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
+
+        let bs = branches(p.to_str().unwrap()).unwrap();
+        assert!(bs.iter().any(|b| b.name == "origin/main" && b.is_remote));
+        assert!(
+            !bs.iter().any(|b| b.name == "origin/HEAD"),
+            "symbolic ref must be skipped"
+        );
+    }
+
+    #[test]
     fn lists_tags() {
         let dir = fixture();
         let ts = tags(dir.path().to_str().unwrap()).unwrap();
@@ -238,6 +273,17 @@ mod tests {
         let info = repo_info(dir.path().to_str().unwrap()).unwrap();
         assert_eq!(info.head.as_deref(), Some("main"));
         assert!(!info.detached);
+    }
+
+    #[test]
+    fn repo_info_reports_detached_head() {
+        let dir = fixture();
+        let p = dir.path();
+        // Detach HEAD onto the first commit.
+        git(p, &["checkout", "-q", "HEAD~1"]);
+        let info = repo_info(p.to_str().unwrap()).unwrap();
+        assert!(info.detached);
+        assert!(info.head.is_none());
     }
 
     #[test]

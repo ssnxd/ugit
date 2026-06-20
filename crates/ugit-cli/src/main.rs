@@ -50,6 +50,12 @@ enum Command {
         format: Format,
     },
 
+    /// Open an existing diff in the ugit desktop app (via the `ugit://` deep link).
+    Open {
+        /// The diff-id to open.
+        diff_id: String,
+    },
+
     /// List recent diffs (id, refs, repo, comment count) — discover diff-ids.
     Diffs {
         /// Only show diffs for this repository path.
@@ -164,6 +170,15 @@ fn main() -> Result<()> {
             }
         }
 
+        Command::Open { diff_id } => {
+            // Validate the diff exists before handing off, so a bad id fails here
+            // rather than silently in the GUI.
+            store::get_diff(&conn, &diff_id).context("looking up diff")?;
+            let url = format!("ugit://diff/{diff_id}");
+            open::that(&url).with_context(|| format!("opening {url}"))?;
+            println!("opening {diff_id} in ugit…");
+        }
+
         Command::Diffs {
             repo,
             limit,
@@ -214,6 +229,7 @@ fn main() -> Result<()> {
                 line,
                 side.as_deref(),
                 &body,
+                None,
             )
             .context("adding comment")?;
             println!("{}", comment.id);
@@ -350,6 +366,7 @@ mod tests {
                 line: Some(10),
                 side: Some("right".into()),
                 body: "anchored".into(),
+                line_content: None,
                 created_at: 0,
             },
             Comment {
@@ -359,6 +376,7 @@ mod tests {
                 line: None,
                 side: None,
                 body: "general".into(),
+                line_content: None,
                 created_at: 0,
             },
         ];
@@ -378,6 +396,7 @@ mod tests {
             line: Some(3),
             side: Some("left".into()),
             body: "x".into(),
+            line_content: None,
             created_at: 42,
         };
         let json = serde_json::to_string(&c).unwrap();

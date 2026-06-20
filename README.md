@@ -13,20 +13,56 @@ In an agent-driven workflow, the diff is the unit of collaboration between you a
 - **Built for agents.** Export your comments and feedback in a structured form an agent can act on — turn a review into a task.
 - **One tool, two surfaces.** Everything is available both in the desktop UI and from the terminal via the CLI.
 
+## Desktop app
+
+Open a repository (folder picker or a recent repo), choose **left** and **right** refs from the
+branch / tag / commit pickers, and hit **Diff**. The file tree shows what changed; the main pane
+renders a syntax-highlighted diff. Hover any line and click the **+** to comment on that exact
+change — comments render inline and in the side panel. Pick any Shiki theme; the whole app
+re-themes. Keyboard-first: `j`/`k` between files, `c` comments, `s` split/unified, `o` switch repo,
+`?` for the full shortcut list.
+
 ## CLI
 
-The CLI mirrors the desktop app so you can stay in the terminal and pipe diffs and feedback into your agents.
+The CLI mirrors the desktop app over the **same store**, so anything you do in one shows up in the
+other. It's built for piping diffs and review feedback into agents.
 
 ```sh
-# Export all comments on a diff as JSON or Markdown
-ugit comment <diff-id>
+# Diff two refs. Prints a stable diff-id (line 1) + a --stat-style listing.
+ugit diff <left> <right> [--repo .] [--kind ref-to-ref]
+
+#   …as a git-style unified patch:
+ugit diff HEAD^ HEAD --format patch
+
+#   …as structured JSON (files → hunks → lines, with line numbers):
+ugit diff HEAD^ HEAD --format json
+
+# List recent diffs with comment counts (discover diff-ids).
+ugit diffs [--repo <path>] [--limit 20] [--format table|json]
+
+# Attach a comment — general, or anchored to a file/line/side.
+ugit comment-add <diff-id> --body "Looks off here" --file src/lib.rs --line 42 --side right
+
+# Export every comment on a diff for an agent to act on (JSON or Markdown).
+ugit comment <diff-id> --format json
+
+# Open an existing diff back in the desktop app (deep link).
+ugit open <diff-id>
 ```
 
-`ugit comment <diff-id>` returns a JSON or Markdown file containing every comment on the given diff — ready to feed to an agent so it can pick up your feedback and act on it.
+### Agent workflow
 
-## Status
+```sh
+# 1. You (or an agent) produce a diff and capture its stable id.
+id=$(ugit diff main feature --repo ~/code/app | head -1)
 
-This README describes the **product vision**. uGIT is under active development; the features above describe the intended experience, not a guarantee of what is already implemented.
+# 2. Review it — in the desktop app (`ugit open "$id"`) or via comment-add.
+# 3. Hand the review to an agent as structured feedback:
+ugit comment "$id" --format md
+```
+
+Because both surfaces share one SQLite store, comments made in the GUI are exactly what
+`ugit comment` exports — the review is the unit of collaboration.
 
 ## Architecture
 
@@ -60,12 +96,14 @@ pnpm tauri dev             # run the full desktop app (Vite + Rust window)
 cargo run -p ugit-cli -- diff main HEAD
 cargo run -p ugit-cli -- comment <diff-id> --format md
 
-# Checks
+# Checks (all green on main)
 pnpm build                 # type-check + build the frontend
-pnpm test                  # frontend test suite (Vitest)
-cargo test -p ugit-core    # store tests
 pnpm lint                  # lint with oxlint
-pnpm format                # format with oxfmt
+pnpm test                  # frontend test suite (Vitest)
+cargo test --workspace     # core + CLI tests
+cargo clippy --workspace   # Rust lints
+cargo fmt --check          # Rust formatting
+pnpm format                # format the frontend with oxfmt
 ```
 
 ### Releasing

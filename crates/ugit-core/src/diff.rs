@@ -29,13 +29,21 @@ pub fn compute_diff(
     right: &str,
     kind: DiffKind,
 ) -> Result<Diff> {
-    gix::open(repo_path).map_err(|e| Error::Git(e.to_string()))?;
+    open_repo(repo_path)?;
     store::get_or_create_diff(conn, repo_path, left, right, kind)
+}
+
+/// Open a repository with a small object cache set, so tree diffs and rename
+/// detection don't re-decode the same objects.
+fn open_repo(repo_path: &str) -> Result<gix::Repository> {
+    let mut repo = gix::open(repo_path).map_err(|e| Error::Git(e.to_string()))?;
+    repo.object_cache_size_if_unset(8 * 1024 * 1024);
+    Ok(repo)
 }
 
 /// Compute the file-level summary of the diff between `left` and `right`.
 pub fn diff_summary(repo_path: &str, left: &str, right: &str) -> Result<DiffSummary> {
-    let repo = gix::open(repo_path).map_err(|e| Error::Git(e.to_string()))?;
+    let repo = open_repo(repo_path)?;
     let old_tree = resolve_tree(&repo, left)?;
     let new_tree = resolve_tree(&repo, right)?;
 
@@ -46,6 +54,7 @@ pub fn diff_summary(repo_path: &str, left: &str, right: &str) -> Result<DiffSumm
     let mut files = Vec::new();
     let mut total_additions = 0u32;
     let mut total_deletions = 0u32;
+    let mut first_err: Option<Error> = None;
 
     old_tree
         .changes()
@@ -56,14 +65,22 @@ pub fn diff_summary(repo_path: &str, left: &str, right: &str) -> Result<DiffSumm
             }
             let (path, old_path, status) = change_meta(&change);
 
-            // `line_counts()` returns None when either side is binary.
-            let (binary, additions, deletions) = match change
-                .diff(&mut cache)
-                .ok()
-                .and_then(|mut platform| platform.line_counts().ok().flatten())
-            {
-                Some(counts) => (false, counts.insertions, counts.removals),
-                None => (true, 0, 0),
+            // `line_counts()` is `Ok(None)` for binary; a real `Err` must surface
+            // rather than masquerade as a binary file with 0/0 counts.
+            let counts = match change.diff(&mut cache) {
+                Ok(mut platform) => platform.line_counts(),
+                Err(e) => {
+                    first_err = Some(Error::Git(e.to_string()));
+                    return Ok(std::ops::ControlFlow::Break(()));
+                }
+            };
+            let (binary, additions, deletions) = match counts {
+                Ok(Some(c)) => (false, c.insertions, c.removals),
+                Ok(None) => (true, 0, 0),
+                Err(e) => {
+                    first_err = Some(Error::Git(e.to_string()));
+                    return Ok(std::ops::ControlFlow::Break(()));
+                }
             };
 
             total_additions += additions;
@@ -82,6 +99,9 @@ pub fn diff_summary(repo_path: &str, left: &str, right: &str) -> Result<DiffSumm
         })
         .map_err(|e| Error::Git(e.to_string()))?;
 
+    if let Some(e) = first_err {
+        return Err(e);
+    }
     Ok(DiffSummary {
         files,
         total_additions,
@@ -100,24 +120,27 @@ pub fn file_hunks(
     path: &str,
     old_path: Option<&str>,
 ) -> Result<Vec<Hunk>> {
-    let repo = gix::open(repo_path).map_err(|e| Error::Git(e.to_string()))?;
+    let repo = open_repo(repo_path)?;
     let old_tree = resolve_tree(&repo, left)?;
     let new_tree = resolve_tree(&repo, right)?;
 
     let old = blob_at(&old_tree, old_path.unwrap_or(path))?.unwrap_or_default();
     let new = blob_at(&new_tree, path)?.unwrap_or_default();
-    if is_binary(&old) || is_binary(&new) {
+    if is_undiffable(&old) || is_undiffable(&new) {
         return Ok(Vec::new());
     }
     Ok(hunks_for_blobs(&old, &new))
 }
 
-/// A blob's text at `rev`. `None` when the path is absent or binary.
+/// A blob's text at `rev`. `None` when the path is absent, binary, or too large
+/// to render.
 pub fn file_content(repo_path: &str, rev: &str, path: &str) -> Result<Option<String>> {
-    let repo = gix::open(repo_path).map_err(|e| Error::Git(e.to_string()))?;
+    let repo = open_repo(repo_path)?;
     let tree = resolve_tree(&repo, rev)?;
     match blob_at(&tree, path)? {
-        Some(bytes) if !is_binary(&bytes) => Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
+        Some(bytes) if !is_undiffable(&bytes) => {
+            Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+        }
         _ => Ok(None),
     }
 }
@@ -125,7 +148,7 @@ pub fn file_content(repo_path: &str, rev: &str, path: &str) -> Result<Option<Str
 /// The full line-level detail of every changed file. Powers `--format json` and
 /// the patch renderer; the GUI prefers per-file [`file_hunks`] for laziness.
 pub fn diff_detail(repo_path: &str, left: &str, right: &str) -> Result<Vec<FileDiffDetail>> {
-    let repo = gix::open(repo_path).map_err(|e| Error::Git(e.to_string()))?;
+    let repo = open_repo(repo_path)?;
     let old_tree = resolve_tree(&repo, left)?;
     let new_tree = resolve_tree(&repo, right)?;
 
@@ -287,6 +310,15 @@ fn blob_at(tree: &gix::Tree, path: &str) -> Result<Option<Vec<u8>>> {
 /// git's heuristic: a NUL byte in the first 8000 bytes means binary.
 fn is_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8000).any(|&b| b == 0)
+}
+
+/// Blobs larger than this aren't rendered as a text diff — highlighting a huge
+/// file (minified bundles, lock files, generated code) is slow and rarely useful.
+const MAX_DIFF_BYTES: usize = 1_500_000;
+
+/// A blob we won't produce a text diff for: binary or too large.
+fn is_undiffable(bytes: &[u8]) -> bool {
+    bytes.len() > MAX_DIFF_BYTES || is_binary(bytes)
 }
 
 /// Run one blob diff and collect structured hunks with per-line numbers.
@@ -537,6 +569,79 @@ mod tests {
             vec!["src/nested/deep.txt"],
             "only the changed file should appear, no `src` or `src/nested` dirs"
         );
+    }
+
+    #[test]
+    fn detects_renames() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        // A sizeable file so rename similarity is unambiguous.
+        let body: String = (0..50).map(|i| format!("line {i}\n")).collect();
+        write(p, "old_name.txt", &body);
+        git(p, &["add", "."]);
+        git(p, &["commit", "-qm", "first"]);
+        git(p, &["mv", "old_name.txt", "new_name.txt"]);
+        git(p, &["commit", "-qm", "rename"]);
+
+        let summary = diff_summary(p.to_str().unwrap(), "HEAD^", "HEAD").unwrap();
+        let renamed = summary
+            .files
+            .iter()
+            .find(|f| f.path == "new_name.txt")
+            .expect("renamed file present");
+        assert_eq!(renamed.status, FileStatus::Renamed);
+        assert_eq!(renamed.old_path.as_deref(), Some("old_name.txt"));
+    }
+
+    #[test]
+    fn flags_binary_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        std::fs::write(p.join("data.bin"), [0u8, 1, 2, 0, 255, 0]).unwrap();
+        git(p, &["add", "."]);
+        git(p, &["commit", "-qm", "first"]);
+        std::fs::write(p.join("data.bin"), [0u8, 9, 9, 9, 0, 1]).unwrap();
+        git(p, &["commit", "-qam", "second"]);
+
+        let summary = diff_summary(p.to_str().unwrap(), "HEAD^", "HEAD").unwrap();
+        let bin = summary.files.iter().find(|f| f.path == "data.bin").unwrap();
+        assert!(bin.binary);
+        assert_eq!((bin.additions, bin.deletions), (0, 0));
+        // file_content returns None for binary.
+        assert!(file_content(p.to_str().unwrap(), "HEAD", "data.bin")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn empty_diff_for_identical_refs() {
+        let dir = fixture();
+        let p = dir.path().to_str().unwrap();
+        let summary = diff_summary(p, "HEAD", "HEAD").unwrap();
+        assert!(summary.files.is_empty());
+        assert_eq!((summary.total_additions, summary.total_deletions), (0, 0));
+    }
+
+    #[test]
+    fn oversized_files_are_not_diffed() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        write(p, "small.txt", "a\n");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-qm", "first"]);
+        // A blob just over the cap.
+        let big = "x\n".repeat(MAX_DIFF_BYTES / 2 + 100);
+        write(p, "small.txt", &big);
+        git(p, &["commit", "-qam", "second"]);
+
+        let pp = p.to_str().unwrap();
+        assert!(file_hunks(pp, "HEAD^", "HEAD", "small.txt", None)
+            .unwrap()
+            .is_empty());
+        assert!(file_content(pp, "HEAD", "small.txt").unwrap().is_none());
     }
 
     #[test]

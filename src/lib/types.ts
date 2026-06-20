@@ -107,7 +107,9 @@ export type Comment = {
   diffId: string;
   filePath: string | null;
   line: number | null;
-  side: string | null;
+  side: "left" | "right" | null;
   body: string;
+  /** The anchored line's text when the comment was made (for stale detection). */
+  lineContent: string | null;
   createdAt: number;
 };

@@ -69,21 +69,33 @@ fn migrate(conn: &Connection) -> Result<()> {
             created_at INTEGER NOT NULL
         );
         CREATE TABLE IF NOT EXISTS comments (
-            id         TEXT PRIMARY KEY,
-            diff_id    TEXT NOT NULL REFERENCES diffs(id) ON DELETE CASCADE,
-            file_path  TEXT,
-            line       INTEGER,
-            side       TEXT,
-            body       TEXT NOT NULL,
-            created_at INTEGER NOT NULL
+            id           TEXT PRIMARY KEY,
+            diff_id      TEXT NOT NULL REFERENCES diffs(id) ON DELETE CASCADE,
+            file_path    TEXT,
+            line         INTEGER,
+            side         TEXT,
+            body         TEXT NOT NULL,
+            line_content TEXT,
+            created_at   INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_comments_diff ON comments(diff_id);
+        CREATE INDEX IF NOT EXISTS idx_diffs_repo_created ON diffs(repo_path, created_at DESC);
         CREATE TABLE IF NOT EXISTS recent_repos (
             path        TEXT PRIMARY KEY,
             name        TEXT NOT NULL,
             last_opened INTEGER NOT NULL
         );",
     )?;
+
+    // Additive migration for stores created before `line_content` existed.
+    // `ALTER TABLE ADD COLUMN` errors if the column is already present; ignore
+    // only that case.
+    if let Err(e) = conn.execute("ALTER TABLE comments ADD COLUMN line_content TEXT", []) {
+        let msg = e.to_string();
+        if !msg.contains("duplicate column name") {
+            return Err(Error::Sqlite(e));
+        }
+    }
     Ok(())
 }
 
@@ -206,6 +218,7 @@ pub fn add_comment(
     line: Option<i64>,
     side: Option<&str>,
     body: &str,
+    line_content: Option<&str>,
 ) -> Result<Comment> {
     // Ensure the diff exists so we return a friendly error rather than a raw FK failure.
     get_diff(conn, diff_id)?;
@@ -216,11 +229,12 @@ pub fn add_comment(
         line,
         side: side.map(str::to_string),
         body: body.to_string(),
+        line_content: line_content.map(str::to_string),
         created_at: now(),
     };
     conn.execute(
-        "INSERT INTO comments (id, diff_id, file_path, line, side, body, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO comments (id, diff_id, file_path, line, side, body, line_content, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             comment.id,
             comment.diff_id,
@@ -228,6 +242,7 @@ pub fn add_comment(
             comment.line,
             comment.side,
             comment.body,
+            comment.line_content,
             comment.created_at
         ],
     )?;
@@ -244,7 +259,7 @@ pub fn update_comment(conn: &Connection, id: &str, body: &str) -> Result<Comment
         return Err(Error::CommentNotFound(id.to_string()));
     }
     conn.query_row(
-        "SELECT id, diff_id, file_path, line, side, body, created_at
+        "SELECT id, diff_id, file_path, line, side, body, line_content, created_at
          FROM comments WHERE id = ?1",
         params![id],
         row_to_comment,
@@ -266,7 +281,7 @@ pub fn comments_for_diff(conn: &Connection, diff_id: &str) -> Result<Vec<Comment
     // Order by rowid (monotonic per insert) so the feed is stable insertion
     // order even when multiple comments land in the same wall-clock second.
     let mut stmt = conn.prepare(
-        "SELECT id, diff_id, file_path, line, side, body, created_at
+        "SELECT id, diff_id, file_path, line, side, body, line_content, created_at
          FROM comments WHERE diff_id = ?1 ORDER BY rowid ASC",
     )?;
     let rows = stmt.query_map(params![diff_id], row_to_comment)?;
@@ -327,7 +342,8 @@ fn row_to_comment(row: &rusqlite::Row) -> rusqlite::Result<Comment> {
         line: row.get(3)?,
         side: row.get(4)?,
         body: row.get(5)?,
-        created_at: row.get(6)?,
+        line_content: row.get(6)?,
+        created_at: row.get(7)?,
     })
 }
 
@@ -353,9 +369,10 @@ mod tests {
             Some(10),
             Some("right"),
             "looks off",
+            Some("let x = old;"),
         )
         .unwrap();
-        add_comment(&conn, &diff.id, None, None, None, "general note").unwrap();
+        add_comment(&conn, &diff.id, None, None, None, "general note", None).unwrap();
 
         let comments = comments_for_diff(&conn, &diff.id).unwrap();
         assert_eq!(comments.len(), 2);
@@ -377,7 +394,16 @@ mod tests {
         };
 
         let b = open_at(&path).unwrap();
-        add_comment(&b, &diff_id, None, None, None, "from the other process").unwrap();
+        add_comment(
+            &b,
+            &diff_id,
+            None,
+            None,
+            None,
+            "from the other process",
+            None,
+        )
+        .unwrap();
         assert_eq!(comments_for_diff(&b, &diff_id).unwrap().len(), 1);
     }
 
@@ -388,8 +414,8 @@ mod tests {
 
         let a = insert_diff(&conn, "/repo-a", "x", "y", DiffKind::RefToRef).unwrap();
         let _b = insert_diff(&conn, "/repo-b", "m", "n", DiffKind::BranchToBranch).unwrap();
-        add_comment(&conn, &a.id, None, None, None, "one").unwrap();
-        add_comment(&conn, &a.id, None, None, None, "two").unwrap();
+        add_comment(&conn, &a.id, None, None, None, "one", None).unwrap();
+        add_comment(&conn, &a.id, None, None, None, "two", None).unwrap();
 
         let all = list_diffs(&conn, None, 10).unwrap();
         assert_eq!(all.len(), 2);
@@ -418,11 +444,30 @@ mod tests {
     }
 
     #[test]
+    fn comment_persists_line_content_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_at(dir.path().join("ugit.db")).unwrap();
+        let diff = insert_diff(&conn, "/repo", "a", "b", DiffKind::RefToRef).unwrap();
+        add_comment(
+            &conn,
+            &diff.id,
+            Some("src/lib.rs"),
+            Some(10),
+            Some("right"),
+            "note",
+            Some("let x = old;"),
+        )
+        .unwrap();
+        let stored = &comments_for_diff(&conn, &diff.id).unwrap()[0];
+        assert_eq!(stored.line_content.as_deref(), Some("let x = old;"));
+    }
+
+    #[test]
     fn edit_and_delete_comment() {
         let dir = tempfile::tempdir().unwrap();
         let conn = open_at(dir.path().join("ugit.db")).unwrap();
         let diff = insert_diff(&conn, "/repo", "a", "b", DiffKind::RefToRef).unwrap();
-        let c = add_comment(&conn, &diff.id, None, None, None, "first").unwrap();
+        let c = add_comment(&conn, &diff.id, None, None, None, "first", None).unwrap();
 
         let updated = update_comment(&conn, &c.id, "edited").unwrap();
         assert_eq!(updated.body, "edited");
@@ -444,7 +489,7 @@ mod tests {
     fn comment_on_missing_diff_errors() {
         let dir = tempfile::tempdir().unwrap();
         let conn = open_at(dir.path().join("ugit.db")).unwrap();
-        let err = add_comment(&conn, "nope", None, None, None, "x").unwrap_err();
+        let err = add_comment(&conn, "nope", None, None, None, "x", None).unwrap_err();
         assert!(matches!(err, Error::DiffNotFound(_)));
     }
 }

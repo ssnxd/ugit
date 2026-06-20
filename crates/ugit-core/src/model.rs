@@ -243,6 +243,9 @@ pub struct Comment {
     /// "left" or "right" side of the diff, when line-anchored.
     pub side: Option<String>,
     pub body: String,
+    /// The anchored line's text when the comment was made. Lets a surface flag
+    /// the comment as *stale* if the line has since changed (see D2).
+    pub line_content: Option<String>,
     /// Unix epoch seconds.
     pub created_at: i64,
 }

@@ -1,40 +1,53 @@
 /**
- * Hosts the `@pierre/diffs` Shiki worker pool and keeps its theme in lockstep
- * with ugit's theme store. The diff renderer (and the rest of the app) therefore
- * always reflect the user's chosen Shiki theme + light/dark mode.
+ * Hosts the `@pierre/diffs` Shiki worker pool, keeps its theme in lockstep with
+ * the theme store, and repaints the `--ug-*` chrome tokens from the chosen
+ * theme's resolved colors — so chrome, file tree, and diff all follow one theme.
+ *
+ * Worker readiness is tracked once here and exposed via context: the diff
+ * renderer produces nothing if it mounts before the pool is ready (no retry).
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { createContext, use, useEffect, useState, type ReactNode } from "react";
 import { WorkerPoolContextProvider, useWorkerPool } from "@pierre/diffs/react";
+import { getResolvedThemes, resolveThemes } from "@pierre/diffs";
 // Vite bundles the package's ESM worker; `?worker` yields a Worker constructor.
 import DiffWorker from "@pierre/diffs/worker/worker.js?worker";
 
 import { useTheme } from "../theme/theme";
-import { SHIKI_THEMES } from "./themes";
 
 function workerFactory(): Worker {
   return new DiffWorker();
 }
 
-/** Push the active theme into the worker pool whenever it changes. */
-function ThemeSync() {
-  const pool = useWorkerPool();
-  const { shikiTheme, resolved } = useTheme();
+const WorkerReadyContext = createContext(false);
 
-  useEffect(() => {
-    pool?.setRenderOptions({ theme: SHIKI_THEMES[shikiTheme][resolved] });
-  }, [pool, shikiTheme, resolved]);
-
-  return null;
+/** Whether the Shiki worker pool has finished initializing. */
+export function useWorkerReady(): boolean {
+  return use(WorkerReadyContext);
 }
 
-/**
- * Whether the Shiki worker pool has finished initializing. The diff renderer
- * produces nothing if it mounts before the pool is ready (and doesn't retry), so
- * the diff view waits on this before mounting.
- */
-export function useWorkerReady(): boolean {
+/** Paint the `--ug-bg/ink/accent` primitives from a resolved Shiki theme; the
+ *  rest of the chrome derives from these via color-mix (styles.css). */
+function applyChromeFromTheme(bg: string, fg: string, colors: Record<string, string>) {
+  const root = document.documentElement.style;
+  root.setProperty("--ug-bg", bg);
+  root.setProperty("--ug-ink", fg);
+  const accent =
+    colors["focusBorder"] ||
+    colors["textLink.foreground"] ||
+    colors["button.background"] ||
+    colors["terminal.ansiBlue"];
+  if (accent) root.setProperty("--ug-accent", accent);
+  else root.removeProperty("--ug-accent"); // fall back to the mode token
+}
+
+function PoolBridge({ children }: { children: ReactNode }) {
   const pool = useWorkerPool();
+  const { shikiTheme } = useTheme();
   const [ready, setReady] = useState(() => pool?.isInitialized() ?? false);
+
+  useEffect(() => {
+    pool?.setRenderOptions({ theme: shikiTheme });
+  }, [pool, shikiTheme]);
 
   useEffect(() => {
     if (!pool) return;
@@ -42,26 +55,42 @@ export function useWorkerReady(): boolean {
       setReady(true);
       return;
     }
-    setReady(false);
     return pool.subscribeToStatChanges((stats) => {
       if (stats.managerState === "initialized") setReady(true);
     });
   }, [pool]);
 
-  return ready;
+  // Repaint chrome from the resolved theme once it's available.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await resolveThemes([shikiTheme]);
+        if (cancelled) return;
+        const [t] = getResolvedThemes([shikiTheme]);
+        if (t) applyChromeFromTheme(t.bg, t.fg, t.colors ?? {});
+      } catch {
+        /* keep the class-based fallback tokens */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [shikiTheme, ready]);
+
+  return <WorkerReadyContext value={ready}>{children}</WorkerReadyContext>;
 }
 
 export function DiffWorkerProvider({ children }: { children: ReactNode }) {
-  const { shikiTheme, resolved } = useTheme();
-  const initialTheme = SHIKI_THEMES[shikiTheme][resolved];
+  const { shikiTheme } = useTheme();
 
   return (
     <WorkerPoolContextProvider
       poolOptions={{ workerFactory }}
-      highlighterOptions={{ theme: initialTheme }}
+      highlighterOptions={{ theme: shikiTheme }}
     >
-      <ThemeSync />
-      {children}
+      <PoolBridge>{children}</PoolBridge>
     </WorkerPoolContextProvider>
   );
 }

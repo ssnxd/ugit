@@ -71,6 +71,11 @@ export function diffSummary(repoPath: string, left: string, right: string): Prom
   return invoke<DiffSummary>("diff_summary", { repoPath, left, right });
 }
 
+/** Look up a persisted diff by id (for the `ugit open` deep-link handoff). */
+export function getDiff(id: string): Promise<Diff> {
+  return invoke<Diff>("get_diff", { id });
+}
+
 /** Line-level hunks for a single file (lazy, per-file). */
 export function fileHunks(
   repoPath: string,
@@ -98,7 +103,8 @@ export function addComment(args: {
   body: string;
   filePath?: string | null;
   line?: number | null;
-  side?: string | null;
+  side?: "left" | "right" | null;
+  lineContent?: string | null;
 }): Promise<Comment> {
   return invoke<Comment>("add_comment", {
     diffId: args.diffId,
@@ -106,6 +112,7 @@ export function addComment(args: {
     filePath: args.filePath ?? null,
     line: args.line ?? null,
     side: args.side ?? null,
+    lineContent: args.lineContent ?? null,
   });
 }
 

@@ -1,18 +1,23 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 
+import { CommandPalette, type PaletteAction } from "./components/CommandPalette";
 import { CommentsPanel } from "./components/CommentsPanel";
 import { FileTreeSidebar } from "./components/FileTreeSidebar";
+import { JumpToFile } from "./components/JumpToFile";
 import { RefPicker } from "./components/RefPicker";
 import { RepoOpener } from "./components/RepoOpener";
+import { ShortcutsOverlay } from "./components/ShortcutsOverlay";
 import { EmptyState, ErrorState, Skeleton } from "./components/states";
-import { ThemeControls } from "./components/ThemeControls";
 import { DiffView } from "./diff/DiffView";
 import {
   addComment,
   computeDiff,
   deleteComment,
   diffSummary,
+  getDiff,
   listComments,
+  openRepo,
   updateComment,
 } from "./lib/ipc";
 import { useTheme } from "./theme/theme";
@@ -37,20 +42,50 @@ function App() {
   const [diffId, setDiffId] = useState<string | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showJump, setShowJump] = useState(false);
+  const [showPalette, setShowPalette] = useState(false);
 
-  const { diffStyle, setDiffStyle } = useTheme();
+  const { diffStyle, setDiffStyle, diffColors, setDiffColors } = useTheme();
+
+  // Guards against out-of-order async results: each diff run takes a sequence
+  // number; `diffIdRef` mirrors the active diff so a late comment fetch for a
+  // previous diff can't overwrite the current one.
+  const runSeqRef = useRef(0);
+  const diffIdRef = useRef<string | null>(null);
 
   const loadComments = useCallback(async (id: string) => {
     try {
-      setComments(await listComments(id));
+      const result = await listComments(id);
+      if (id === diffIdRef.current) setComments(result);
     } catch {
-      setComments([]);
+      if (id === diffIdRef.current) setComments([]);
     }
   }, []);
 
-  // Keyboard nav: j/k move between changed files (ignored while typing).
+  const closeRepo = useCallback(() => {
+    runSeqRef.current++; // cancel any in-flight diff run
+    diffIdRef.current = null;
+    setRepo(null);
+    setStatus("idle");
+    setSummary(null);
+    setActive(null);
+    setSelected(null);
+    setError("");
+    setDiffId(null);
+    setComments([]);
+    setCommentsOpen(false);
+  }, []);
+
+  // Global keyboard shortcuts (ignored while typing). See ShortcutsOverlay.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // ⌘K / Ctrl-K opens the command palette from anywhere (even inputs).
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowPalette((v) => !v);
+        return;
+      }
       const t = e.target as HTMLElement | null;
       if (
         t &&
@@ -61,6 +96,37 @@ function App() {
       ) {
         return;
       }
+      if (e.key === "?") {
+        e.preventDefault();
+        setShowHelp((v) => !v);
+        return;
+      }
+      if (e.key === "Escape") {
+        setShowHelp(false);
+        setShowJump(false);
+        return;
+      }
+      if (e.key === "o") {
+        e.preventDefault();
+        closeRepo();
+        return;
+      }
+      if (e.key === "p" && status === "ready" && (summary?.files.length ?? 0) > 0) {
+        e.preventDefault();
+        setShowJump(true);
+        return;
+      }
+      if (e.key === "c" && diffId) {
+        e.preventDefault();
+        setCommentsOpen((v) => !v);
+        return;
+      }
+      if (e.key === "s" && status === "ready") {
+        e.preventDefault();
+        setDiffStyle(diffStyle === "split" ? "unified" : "split");
+        return;
+      }
+      // j/k move between changed files.
       const files = summary?.files ?? [];
       if (files.length === 0 || (e.key !== "j" && e.key !== "k")) return;
       e.preventDefault();
@@ -71,32 +137,74 @@ function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [summary, selected]);
+  }, [summary, selected, diffId, status, diffStyle, setDiffStyle, closeRepo]);
 
-  async function runDiff() {
-    if (!repo) return;
-    const params = { repoPath: repo.path, left: left.trim(), right: right.trim() };
-    setStatus("loading");
-    setError("");
-    setSelected(null);
-    setComments([]);
-    setDiffId(null);
-    try {
-      const [result, diff] = await Promise.all([
-        diffSummary(params.repoPath, params.left, params.right),
-        computeDiff(params.repoPath, params.left, params.right),
-      ]);
-      setSummary(result);
-      setActive(params);
-      setStatus("ready");
-      setSelected(result.files[0]?.path ?? null);
-      setDiffId(diff.id);
-      loadComments(diff.id);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setStatus("error");
+  const runDiffWith = useCallback(
+    async (repoPath: string, l: string, r: string) => {
+      const params = { repoPath, left: l.trim(), right: r.trim() };
+      const seq = ++runSeqRef.current;
+      diffIdRef.current = null;
+      setStatus("loading");
+      setError("");
+      setSelected(null);
+      setComments([]);
+      setDiffId(null);
+      try {
+        const [result, diff] = await Promise.all([
+          diffSummary(params.repoPath, params.left, params.right),
+          computeDiff(params.repoPath, params.left, params.right),
+        ]);
+        if (seq !== runSeqRef.current) return; // a newer run superseded this one
+        setSummary(result);
+        setActive(params);
+        setStatus("ready");
+        setSelected(result.files[0]?.path ?? null);
+        diffIdRef.current = diff.id;
+        setDiffId(diff.id);
+        loadComments(diff.id);
+      } catch (e) {
+        if (seq !== runSeqRef.current) return;
+        setError(e instanceof Error ? e.message : String(e));
+        setStatus("error");
+      }
+    },
+    [loadComments],
+  );
+
+  // The diff is always live: recompute whenever the repo or either ref changes.
+  // No "Diff" button — picking a ref (or opening a repo) runs it automatically.
+  useEffect(() => {
+    if (repo) runDiffWith(repo.path, left, right);
+  }, [repo, left, right, runDiffWith]);
+
+  // `ugit open <diff-id>` deep link → restore that comparison in the GUI.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    async function handle(urls: string[] | null) {
+      const url = urls?.find((u) => u.startsWith("ugit://"));
+      const id = url?.match(/ugit:\/\/diff\/([^/?#]+)/)?.[1];
+      if (!id) return;
+      try {
+        const diff = await getDiff(id);
+        const info = await openRepo(diff.repoPath);
+        // Setting these triggers the auto-run diff effect.
+        setRepo(info);
+        setLeft(diff.leftRef);
+        setRight(diff.rightRef);
+      } catch {
+        /* unknown id or non-Tauri context — ignore */
+      }
     }
-  }
+    getCurrent()
+      .then(handle)
+      .catch(() => {});
+    onOpenUrl((urls) => handle(urls))
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {});
+    return () => unlisten?.();
+  }, [runDiffWith]);
 
   async function addCommentTo(body: string, filePath: string | null) {
     if (!diffId) return;
@@ -108,6 +216,7 @@ function App() {
     line: number;
     side: "left" | "right";
     body: string;
+    lineContent: string | null;
   }) {
     if (!diffId) return;
     await addComment({ diffId, ...args });
@@ -122,31 +231,70 @@ function App() {
     if (diffId) loadComments(diffId);
   }
 
-  function closeRepo() {
-    setRepo(null);
-    setStatus("idle");
-    setSummary(null);
-    setActive(null);
-    setSelected(null);
-    setError("");
-    setDiffId(null);
-    setComments([]);
-    setCommentsOpen(false);
+  const selectedFile = useMemo(
+    () => summary?.files.find((f) => f.path === selected) ?? null,
+    [summary, selected],
+  );
+
+  // Commands surfaced in the ⌘K palette, gated by current state.
+  const paletteActions: PaletteAction[] = [];
+  if (repo) {
+    paletteActions.push({ id: "switch-repo", label: "Open / switch repository", run: closeRepo });
   }
+  if (status === "ready" && (summary?.files.length ?? 0) > 0) {
+    paletteActions.push({ id: "jump", label: "Jump to file…", run: () => setShowJump(true) });
+  }
+  if (diffId) {
+    paletteActions.push({
+      id: "comments",
+      label: "Toggle comments",
+      run: () => setCommentsOpen((v) => !v),
+    });
+  }
+  if (status === "ready") {
+    paletteActions.push({
+      id: "layout",
+      label: `Diff layout: ${diffStyle} → ${diffStyle === "split" ? "unified" : "split"}`,
+      run: () => setDiffStyle(diffStyle === "split" ? "unified" : "split"),
+    });
+  }
+  paletteActions.push({
+    id: "diff-colors",
+    label: `Diff colors: ${diffColors === "safe" ? "colorblind-safe" : "classic"} → ${diffColors === "safe" ? "classic" : "colorblind-safe"}`,
+    run: () => setDiffColors(diffColors === "safe" ? "classic" : "safe"),
+  });
 
-  const selectedFile = summary?.files.find((f) => f.path === selected) ?? null;
+  const palette = (
+    <CommandPalette
+      open={showPalette}
+      onClose={() => setShowPalette(false)}
+      actions={paletteActions}
+    />
+  );
+  const paletteButton = (
+    <button
+      type="button"
+      onClick={() => setShowPalette(true)}
+      title="Command palette (⌘K)"
+      className="ease-out-quint rounded-md border border-line bg-surface px-2 py-1 font-mono text-xs text-muted transition-colors hover:bg-raised hover:text-ink"
+    >
+      ⌘K
+    </button>
+  );
 
-  // No repo open yet → the start screen (with a minimal themed top bar).
+  // No repo open yet → the start screen.
   if (!repo) {
     return (
       <div className="flex h-full flex-col bg-bg text-ink">
         <header className="flex h-10 shrink-0 items-center justify-between border-b border-line bg-surface px-3">
           <span className="font-mono text-md font-semibold tracking-tight text-ink">ugit</span>
-          <ThemeControls />
+          {paletteButton}
         </header>
         <div className="min-h-0 flex-1">
           <RepoOpener onOpen={setRepo} />
         </div>
+        {showHelp && <ShortcutsOverlay onClose={() => setShowHelp(false)} />}
+        {palette}
       </div>
     );
   }
@@ -169,14 +317,7 @@ function App() {
           <RefPicker repoPath={repo.path} value={left} onChange={setLeft} label="left" />
           <span className="font-mono text-xs text-faint">→</span>
           <RefPicker repoPath={repo.path} value={right} onChange={setRight} label="right" />
-          <button
-            type="button"
-            onClick={runDiff}
-            disabled={status === "loading"}
-            className="ease-out-quint rounded-md bg-accent px-3 py-1 text-xs font-medium text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-40"
-          >
-            Diff
-          </button>
+          {status === "loading" && <span className="font-mono text-xs text-faint">diffing…</span>}
         </div>
         {diffId && (
           <button
@@ -192,7 +333,7 @@ function App() {
             Comments{comments.length > 0 ? ` ${comments.length}` : ""}
           </button>
         )}
-        <ThemeControls />
+        {paletteButton}
       </header>
 
       {/* Body: sidebar + main */}
@@ -219,10 +360,12 @@ function App() {
           {status === "idle" && (
             <EmptyState
               title="Pick something to diff"
-              hint="Choose two refs above, then hit Diff."
+              hint="Choose two refs above — the diff updates automatically."
             />
           )}
-          {status === "error" && <ErrorState message={error} onRetry={runDiff} />}
+          {status === "error" && (
+            <ErrorState message={error} onRetry={() => runDiffWith(repo.path, left, right)} />
+          )}
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -301,8 +444,14 @@ function App() {
         ) : (
           <span className="text-faint">ready</span>
         )}
-        <span className="ml-auto text-faint">j/k — files · ⌘K — coming soon</span>
+        <span className="ml-auto text-faint">⌘K commands · j/k files · ? shortcuts</span>
       </footer>
+
+      {showHelp && <ShortcutsOverlay onClose={() => setShowHelp(false)} />}
+      {showJump && summary && (
+        <JumpToFile files={summary.files} onPick={setSelected} onClose={() => setShowJump(false)} />
+      )}
+      {palette}
     </div>
   );
 }

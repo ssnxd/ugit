@@ -13,8 +13,10 @@
     "windows": [
       {
         "title": "ugit",
-        "width": 800,
-        "height": 600
+        "width": 1200,
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 480
       }
     ],
     "security": {
@@ -35,6 +37,11 @@
     ]
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["ugit"]
+      }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZGM0FEODY4M0NDNjc0MzUKUldRMWRNWThhTmc2LzFlZzM3Ly9DUFAvU251NGtjQ1lxZFZhVzY4RGRIMlp5T0JZcE4zK1A5R3cK",
       "endpoints": ["https://github.com/ssnxd/ugit/releases/latest/download/latest.json"]

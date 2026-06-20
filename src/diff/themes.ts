@@ -1,27 +1,34 @@
 /**
- * The Shiki theme catalog ugit exposes in the theme picker. Each entry is a
- * dark/light pair of theme names that `@pierre/diffs` understands (its custom
- * `pierre-*` themes plus any bundled Shiki theme). The active entry drives the
- * diff renderer; ugit's chrome follows the resolved light/dark mode.
+ * The theme catalog ugit exposes. A single chosen theme drives the *entire* app
+ * — chrome, file tree, and diff — and its light/dark `type` sets the mode. The
+ * catalog is every bundled Shiki theme plus `@pierre/diffs`' custom Pierre
+ * themes (which aren't in Shiki's bundle).
  */
-export type ShikiThemePair = {
-  label: string;
-  dark: string;
-  light: string;
-};
+import { bundledThemesInfo } from "shiki";
 
-export const SHIKI_THEMES = {
-  pierre: { label: "Pierre", dark: "pierre-dark", light: "pierre-light" },
-  vitesse: { label: "Vitesse", dark: "vitesse-dark", light: "vitesse-light" },
-  github: { label: "GitHub", dark: "github-dark-default", light: "github-light-default" },
-  one: { label: "One", dark: "one-dark-pro", light: "one-light" },
-  catppuccin: { label: "Catppuccin", dark: "catppuccin-mocha", light: "catppuccin-latte" },
-} as const satisfies Record<string, ShikiThemePair>;
+export type ThemeKind = "light" | "dark";
+export type ThemeEntry = { id: string; label: string; type: ThemeKind };
 
-export type ShikiThemeKey = keyof typeof SHIKI_THEMES;
+const PIERRE: ThemeEntry[] = [
+  { id: "pierre-dark", label: "Pierre Dark", type: "dark" },
+  { id: "pierre-light", label: "Pierre Light", type: "light" },
+];
 
-export const DEFAULT_SHIKI_THEME: ShikiThemeKey = "pierre";
+export const THEME_CATALOG: ThemeEntry[] = [
+  ...PIERRE,
+  ...bundledThemesInfo.map((t) => ({ id: t.id, label: t.displayName, type: t.type })),
+];
 
-export function isShikiThemeKey(value: string): value is ShikiThemeKey {
-  return value in SHIKI_THEMES;
+const TYPE_BY_ID: Record<string, ThemeKind> = Object.fromEntries(
+  THEME_CATALOG.map((t) => [t.id, t.type]),
+);
+
+export const DEFAULT_THEME = "pierre-dark";
+
+export function themeKind(id: string): ThemeKind {
+  return TYPE_BY_ID[id] ?? "dark";
+}
+
+export function isThemeId(id: string): boolean {
+  return id in TYPE_BY_ID;
 }

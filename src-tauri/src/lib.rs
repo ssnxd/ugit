@@ -78,6 +78,14 @@ fn commits(
     repo::commits(&repo_path, &rev, limit, offset).map_err(to_err)
 }
 
+/// Look up a persisted diff by id — used by the `ugit open <diff-id>` deep link
+/// to restore the comparison in the GUI.
+#[tauri::command]
+fn get_diff(id: String) -> Result<Diff, String> {
+    let conn = store::open().map_err(to_err)?;
+    store::get_diff(&conn, &id).map_err(to_err)
+}
+
 /// Line-level hunks for a single file (the lazy, per-file path the diff view uses).
 #[tauri::command]
 fn file_hunks(
@@ -111,6 +119,7 @@ fn add_comment(
     line: Option<i64>,
     side: Option<String>,
     body: String,
+    line_content: Option<String>,
 ) -> Result<Comment, String> {
     let conn = store::open().map_err(to_err)?;
     store::add_comment(
@@ -120,6 +129,7 @@ fn add_comment(
         line,
         side.as_deref(),
         &body,
+        line_content.as_deref(),
     )
     .map_err(to_err)
 }
@@ -142,7 +152,8 @@ fn delete_comment(id: String) -> Result<(), String> {
 pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init());
 
     #[cfg(desktop)]
     {
@@ -150,6 +161,15 @@ pub fn run() {
             .plugin(tauri_plugin_process::init())
             .plugin(tauri_plugin_updater::Builder::new().build())
             .setup(|app| {
+                // Register the `ugit://` scheme at runtime (Linux/Windows; macOS
+                // uses the bundle's Info.plist). `ugit open <id>` opens that URL
+                // and the frontend resolves it via the deep-link plugin.
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
+                {
+                    use tauri_plugin_deep_link::DeepLinkExt;
+                    let _ = app.deep_link().register_all();
+                }
+
                 // Check for updates from GitHub Releases on launch, silently
                 // doing nothing if there is no update or the check fails.
                 let handle = app.handle().clone();
@@ -168,6 +188,7 @@ pub fn run() {
             diff_summary,
             file_hunks,
             file_content,
+            get_diff,
             open_repo,
             recent_repos,
             branches,

@@ -43,19 +43,23 @@
  * Values are OKLCH, refined cool-neutral (the Linear register).
  */
 :root {
+  /* Primitives. `--ug-bg`/`--ug-ink`/`--ug-accent` are overridden inline on
+     <html> from the active Shiki theme's resolved colors (see DiffWorkerProvider),
+     so the *whole* app — chrome, tree, diff — follows one theme. Everything else
+     derives from these via color-mix, so any theme yields a coherent palette. */
   --ug-bg: oklch(0.178 0.005 265);
-  --ug-surface: oklch(0.212 0.006 265);
-  --ug-surface-raised: oklch(0.246 0.007 265);
-  --ug-border: oklch(0.3 0.008 265);
-  --ug-border-strong: oklch(0.38 0.01 265);
-
   --ug-ink: oklch(0.94 0.004 265);
-  --ug-muted: oklch(0.68 0.006 265);
-  --ug-faint: oklch(0.56 0.006 265);
-
   --ug-accent: oklch(0.64 0.13 250);
   --ug-accent-ink: oklch(0.985 0 0);
-  --ug-focus: oklch(0.7 0.14 250);
+  --ug-focus: var(--ug-accent);
+
+  /* Derived chrome (mixing bg toward ink works for both dark and light). */
+  --ug-surface: color-mix(in oklch, var(--ug-bg), var(--ug-ink) 5%);
+  --ug-surface-raised: color-mix(in oklch, var(--ug-bg), var(--ug-ink) 9%);
+  --ug-border: color-mix(in oklch, var(--ug-bg), var(--ug-ink) 15%);
+  --ug-border-strong: color-mix(in oklch, var(--ug-bg), var(--ug-ink) 26%);
+  --ug-muted: color-mix(in oklch, var(--ug-ink), var(--ug-bg) 32%);
+  --ug-faint: color-mix(in oklch, var(--ug-ink), var(--ug-bg) 48%);
 
   /* Diff colors — colorblind-safe default (added=blue, removed=orange).
      Switch to classic red/green by adding `.diff-classic` on <html>. */
@@ -76,17 +80,24 @@
   --diffs-deletion-color-override: var(--ug-diff-del-line);
   --diffs-font-family: var(--font-mono);
 
-  /* @pierre/trees follows the same chrome tokens (it auto-injects base styles;
-     these custom props inherit into its shadow DOM). */
-  --trees-bg: var(--ug-surface);
-  --trees-fg: var(--ug-ink);
-  --trees-fg-muted: var(--ug-muted);
-  --trees-accent: var(--ug-accent);
-  --trees-border-color: var(--ug-border);
-  --trees-added-dark: var(--ug-diff-add-line);
-  --trees-added-light: var(--ug-diff-add-line);
-  --trees-deleted-dark: var(--ug-diff-del-line);
-  --trees-deleted-light: var(--ug-diff-del-line);
+  /* @pierre/trees follows the same chrome tokens. Use the `-override` hooks: the
+     tree defines `--trees-bg: var(--trees-bg-override, <default>)` on its own
+     host stylesheet, so only the overrides win over its built-in theme. */
+  --trees-bg-override: var(--ug-surface);
+  --trees-fg-override: var(--ug-ink);
+  --trees-fg-muted-override: var(--ug-muted);
+  --trees-accent-override: var(--ug-accent);
+  --trees-border-color-override: var(--ug-border);
+  --trees-selected-bg-override: color-mix(in oklch, var(--ug-accent) 18%, transparent);
+  --trees-git-added-color-override: var(--ug-diff-add-line);
+  --trees-git-deleted-color-override: var(--ug-diff-del-line);
+  --trees-git-modified-color-override: var(--ug-accent);
+  --trees-git-renamed-color-override: var(--ug-accent);
+  --trees-git-untracked-color-override: var(--ug-muted);
+  --trees-status-added-override: var(--ug-diff-add-line);
+  --trees-status-deleted-override: var(--ug-diff-del-line);
+  --trees-status-modified-override: var(--ug-accent);
+  --trees-status-renamed-override: var(--ug-accent);
 
   /* Semantic elevation + z-scale */
   --ug-shadow-overlay: 0 8px 30px -8px oklch(0 0 0 / 0.5), 0 2px 8px -4px oklch(0 0 0 / 0.4);
@@ -98,20 +109,14 @@
   --z-tooltip: 600;
 }
 
+/* Light mode overrides only the primitives + diff palette; surface/border/muted/
+   faint still derive from bg+ink via the :root color-mix rules above. These are
+   the fallback when no Shiki theme has repainted bg/ink/accent yet. */
 .light {
   --ug-bg: oklch(0.995 0 0);
-  --ug-surface: oklch(0.975 0.002 265);
-  --ug-surface-raised: oklch(1 0 0);
-  --ug-border: oklch(0.9 0.004 265);
-  --ug-border-strong: oklch(0.82 0.006 265);
-
   --ug-ink: oklch(0.26 0.01 265);
-  --ug-muted: oklch(0.48 0.01 265);
-  --ug-faint: oklch(0.62 0.008 265);
-
   --ug-accent: oklch(0.56 0.15 250);
   --ug-accent-ink: oklch(0.995 0 0);
-  --ug-focus: oklch(0.56 0.15 250);
 
   --ug-diff-add-bg: oklch(0.93 0.04 230);
   --ug-diff-add-line: oklch(0.5 0.12 230);

@@ -16,3 +16,5 @@ ugit-core = { workspace = true }
 serde_json = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
+# Opens the `ugit://` deep link so `ugit open <id>` hands off to the desktop app.
+open = "5"
