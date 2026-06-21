@@ -87,7 +87,9 @@ export function DiffWorkerProvider({ children }: { children: ReactNode }) {
 
   return (
     <WorkerPoolContextProvider
-      poolOptions={{ workerFactory }}
+      // Default LRU is 100; raise it so every file in a large changeset stays
+      // highlighted once primed and navigating back to it is instant.
+      poolOptions={{ workerFactory, totalASTLRUCacheSize: 600 }}
       highlighterOptions={{ theme: shikiTheme }}
     >
       <PoolBridge>{children}</PoolBridge>

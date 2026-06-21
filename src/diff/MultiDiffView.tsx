@@ -28,6 +28,21 @@ type Anno =
 const toDiffsSide = (s: Side): AnnotationSide => (s === "right" ? "additions" : "deletions");
 const fromDiffsSide = (s: AnnotationSide): Side => (s === "additions" ? "right" : "left");
 
+/** Fast non-cryptographic hash (cyrb53) of the patch, used only to derive a
+ *  stable, content-unique highlight cache prefix. */
+function hashPatch(str: string): string {
+  let h1 = 0xdeadbeef ^ str.length;
+  let h2 = 0x41c6ce57 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
 export function MultiDiffView({
   patch,
   diffStyle,
@@ -56,10 +71,28 @@ export function MultiDiffView({
   const viewRef = useRef<CodeViewHandle<Anno>>(null);
   const [draft, setDraft] = useState<Anchor | null>(null);
 
+  // Scroll-spy ↔ scroll-to would otherwise fight: a j/k or tree click scrolls
+  // the file to the top, the scroll fires onScroll, and the spy snaps `selected`
+  // to a neighbour when the target can't reach the very top (bottom clamp /
+  // sticky-header offset). We let one writer win at a time — while a
+  // programmatic scroll is settling, the spy is muted.
+  const programmaticRef = useRef(false);
+  const muteTimerRef = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const lastScrollTopRef = useRef(0);
+
+  // Content-addressed prefix so every parsed file gets a stable `cacheKey`.
+  // Without it `processPatch` leaves `cacheKey` undefined, which silently
+  // disables BOTH highlight priming and result caching — so every file
+  // re-highlights from scratch as it scrolls in (the plain-text flash). Keying
+  // on the patch content means a different diff can't collide with stale
+  // highlights, and re-opening the same diff reuses them.
+  const cacheKeyPrefix = useMemo(() => `ugit-${hashPatch(patch)}`, [patch]);
+
   const files = useMemo<FileDiffMetadata[]>(() => {
     if (!patch.trim()) return [];
     try {
-      const parsedFiles = processPatch(patch).files;
+      const parsedFiles = processPatch(patch, cacheKeyPrefix).files;
       const rank = new Map(orderedPaths.map((path, index) => [path, index]));
       return parsedFiles
         .map((file, index) => ({ file, index }))
@@ -72,7 +105,7 @@ export function MultiDiffView({
     } catch {
       return [];
     }
-  }, [orderedPaths, patch]);
+  }, [orderedPaths, patch, cacheKeyPrefix]);
 
   // Reset any open draft when the underlying diff changes.
   useEffect(() => setDraft(null), [patch]);
@@ -84,30 +117,69 @@ export function MultiDiffView({
     for (const f of files) pool.primeDiffHighlightCache(f);
   }, [files, ready, pool]);
 
-  // Scroll to the selected file (tree click / j-k) — instant, no remount.
+  // Scroll to the selected file (tree click / j-k) — instant, no remount. Mute
+  // the scroll-spy for a beat so the resulting scroll can't bounce `selected`.
   useEffect(() => {
-    if (scrollToPath) {
-      viewRef.current?.scrollTo({
-        type: "item",
-        id: scrollToPath,
-        align: "start",
-        behavior: "instant",
-      });
-    }
+    if (!scrollToPath) return;
+    programmaticRef.current = true;
+    if (muteTimerRef.current != null) clearTimeout(muteTimerRef.current);
+    muteTimerRef.current = window.setTimeout(() => {
+      programmaticRef.current = false;
+      muteTimerRef.current = null;
+    }, 150);
+    viewRef.current?.scrollTo({
+      type: "item",
+      id: scrollToPath,
+      align: "start",
+      behavior: "instant",
+    });
   }, [scrollToPath, scrollToKey, ready]);
 
-  const handleScroll = useCallback(
+  useEffect(() => {
+    return () => {
+      if (muteTimerRef.current != null) clearTimeout(muteTimerRef.current);
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  // Resolve the top-most visible file. Item tops are monotonic in file order, so
+  // binary-search for the last file at or above the viewport top — O(log n) per
+  // frame instead of scanning every file.
+  const emitActivePath = useCallback(
     (scrollTop: number, viewer: ScrollViewer) => {
-      let activePath: string | null = null;
-      for (const f of files) {
-        const top = viewer.getTopForItem(f.name);
-        if (top == null || top > scrollTop + 1) break;
-        activePath = f.name;
+      if (files.length === 0) return;
+      const threshold = scrollTop + 1;
+      let lo = 0;
+      let hi = files.length - 1;
+      let found = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const top = viewer.getTopForItem(files[mid].name);
+        if (top != null && top <= threshold) {
+          found = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
       }
-      activePath ??= files[0]?.name ?? null;
-      if (activePath) onActivePathChange(activePath);
+      onActivePathChange(files[found].name);
     },
     [files, onActivePathChange],
+  );
+
+  // Raw scroll events fire faster than we need; coalesce to one spy pass per
+  // frame, and stay quiet while a programmatic scroll is settling.
+  const handleScroll = useCallback(
+    (scrollTop: number, viewer: ScrollViewer) => {
+      if (programmaticRef.current) return;
+      lastScrollTopRef.current = scrollTop;
+      if (rafRef.current != null) return;
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        emitActivePath(lastScrollTopRef.current, viewer);
+      });
+    },
+    [emitActivePath],
   );
 
   const items = useMemo<CodeViewDiffItem<Anno>[]>(() => {

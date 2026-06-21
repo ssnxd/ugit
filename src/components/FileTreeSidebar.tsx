@@ -78,9 +78,14 @@ export function FileTreeSidebar({
     renderRowDecoration,
   });
 
-  // Reflect app-driven selection (e.g. keyboard nav) into the tree.
+  // Reflect app-driven selection (e.g. keyboard nav / scroll-sync) into the
+  // tree. `item.select()` is additive, so clear any stale selection first —
+  // otherwise every file scrolled past stays highlighted.
   useEffect(() => {
     if (!selected) return;
+    for (const path of model.getSelectedPaths()) {
+      if (path !== selected) model.getItem(path)?.deselect();
+    }
     const item = model.getItem(selected);
     if (item && !item.isSelected()) item.select();
     model.scrollToPath(selected, { offset: "nearest" });

@@ -22,8 +22,9 @@ import {
   unifiedDiff,
   updateComment,
 } from "./lib/ipc";
+import { sortFilesByTreeOrder } from "./lib/treeOrder";
 import { useTheme } from "./theme/theme";
-import type { Comment, DiffSummary, RepoInfo } from "./lib/types";
+import type { Comment, DiffSummary, FileChange, RepoInfo } from "./lib/types";
 
 type Status = "idle" | "loading" | "ready" | "error";
 /** The refs that produced the current summary — frozen so changing the pickers
@@ -59,6 +60,16 @@ function App() {
   const runSeqRef = useRef(0);
   const diffIdRef = useRef<string | null>(null);
 
+  // Latest state the global key handler reads, so it can subscribe once instead
+  // of re-binding the listener on every selection/scroll change.
+  const keyStateRef = useRef<{
+    files: FileChange[];
+    selected: string | null;
+    diffId: string | null;
+    status: Status;
+    diffStyle: "split" | "unified";
+  }>({ files: [], selected: null, diffId: null, status: "idle", diffStyle: "split" });
+
   const loadComments = useCallback(async (id: string) => {
     try {
       const result = await listComments(id);
@@ -93,7 +104,17 @@ function App() {
     setSelected((current) => (current === path ? current : path));
   }, []);
 
+  keyStateRef.current = {
+    files: summary?.files ?? [],
+    selected,
+    diffId,
+    status,
+    diffStyle,
+  };
+
   // Global keyboard shortcuts (ignored while typing). See ShortcutsOverlay.
+  // Subscribes once and reads live state from `keyStateRef`, so rapid j/k and
+  // scroll-driven selection changes don't churn the listener.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       // ⌘K / Ctrl-K opens the command palette from anywhere (even inputs).
@@ -112,6 +133,7 @@ function App() {
       ) {
         return;
       }
+      const { files, selected, diffId, status, diffStyle } = keyStateRef.current;
       if (e.key === "?") {
         e.preventDefault();
         setShowHelp((v) => !v);
@@ -127,7 +149,7 @@ function App() {
         closeRepo();
         return;
       }
-      if (e.key === "p" && status === "ready" && (summary?.files.length ?? 0) > 0) {
+      if (e.key === "p" && status === "ready" && files.length > 0) {
         e.preventDefault();
         setShowJump(true);
         return;
@@ -143,7 +165,6 @@ function App() {
         return;
       }
       // j/k move between changed files.
-      const files = summary?.files ?? [];
       if (files.length === 0 || (e.key !== "j" && e.key !== "k")) return;
       e.preventDefault();
       const i = files.findIndex((f) => f.path === selected);
@@ -154,16 +175,7 @@ function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [
-    summary,
-    selected,
-    diffId,
-    status,
-    diffStyle,
-    setDiffStyle,
-    closeRepo,
-    selectAndScrollToFile,
-  ]);
+  }, [closeRepo, setDiffStyle, selectAndScrollToFile]);
 
   const runDiffWith = useCallback(
     async (repoPath: string, l: string, r: string) => {
@@ -186,11 +198,14 @@ function App() {
           unifiedDiff(params.repoPath, params.left, params.right),
         ]);
         if (seq !== runSeqRef.current) return; // a newer run superseded this one
-        setSummary(result);
+        // Sort once into the tree's visual order so the sidebar, diff view,
+        // j/k nav and jump-to-file all agree on file ordering.
+        const orderedFiles = sortFilesByTreeOrder(result.files);
+        setSummary({ ...result, files: orderedFiles });
         setActive(params);
         setPatch(patchText);
         setStatus("ready");
-        const firstPath = result.files[0]?.path ?? null;
+        const firstPath = orderedFiles[0]?.path ?? null;
         setSelected(firstPath);
         setScrollRequest((prev) =>
           firstPath ? { path: firstPath, key: (prev?.key ?? 0) + 1 } : null,
